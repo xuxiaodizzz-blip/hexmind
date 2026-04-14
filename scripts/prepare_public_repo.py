@@ -9,24 +9,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_DIR = ROOT / "exports" / "github-public"
 
-ROOT_FILE_MAPPINGS: dict[str, str] = {
-    "ATTRIBUTIONS.md": "ATTRIBUTIONS.md",
-    "CONTRIBUTING.md": "CONTRIBUTING.md",
-    "SECURITY.md": "SECURITY.md",
-    ".env.example": ".env.example",
-    ".gitignore": ".gitignore",
-    "LICENSE": "LICENSE",
-    "pyproject.toml": "pyproject.toml",
-    "README.public.md": "README.md",
+ROOT_FILE_MAPPINGS: dict[str, tuple[str, ...]] = {
+    "ATTRIBUTIONS.md": ("ATTRIBUTIONS.md",),
+    "CONTRIBUTING.md": ("CONTRIBUTING.md",),
+    "SECURITY.md": ("SECURITY.md",),
+    ".env.example": (".env.example",),
+    ".gitignore": (".gitignore",),
+    "LICENSE": ("LICENSE",),
+    "pyproject.toml": ("pyproject.toml",),
+    "README.md": ("README.public.md", "README.md"),
 }
 
-DIR_MAPPINGS: dict[str, str] = {
-    ".github": ".github",
-    "src": "src",
-    "tests": "tests",
-    "docs/public": "docs/public",
-    "open_source_assets/personas": "personas",
-    "open_source_assets/prompts": "prompts",
+DIR_MAPPINGS: dict[str, tuple[str, ...]] = {
+    ".github": (".github",),
+    "src": ("src",),
+    "tests": ("tests",),
+    "docs/public": ("docs/public",),
+    "personas": ("open_source_assets/personas", "personas"),
+    "prompts": ("open_source_assets/prompts", "prompts"),
 }
 
 FILE_MAPPINGS: dict[str, str] = {
@@ -75,6 +75,18 @@ def _copy_tree(relative_src: str, relative_dst: str, output_dir: Path) -> None:
     shutil.copytree(src, dst, dirs_exist_ok=True, ignore=EXPORT_IGNORE)
 
 
+def _resolve_existing_path(candidates: tuple[str, ...], *, kind: str) -> str:
+    """Pick the first existing source path from a list of candidates."""
+    for candidate in candidates:
+        path = ROOT / candidate
+        if path.exists():
+            return candidate
+    raise FileNotFoundError(
+        f"Required export {kind} not found. Tried: "
+        + ", ".join(str(ROOT / candidate) for candidate in candidates)
+    )
+
+
 def _reset_output_dir(output_dir: Path) -> None:
     """Clear exported contents while preserving an existing Git repo."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -100,10 +112,10 @@ def export_public_repo(output_dir: Path = DEFAULT_OUTPUT_DIR, *, overwrite: bool
     else:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    for src, dst in ROOT_FILE_MAPPINGS.items():
-        _copy_file(src, dst, output_dir)
-    for src, dst in DIR_MAPPINGS.items():
-        _copy_tree(src, dst, output_dir)
+    for dst, candidates in ROOT_FILE_MAPPINGS.items():
+        _copy_file(_resolve_existing_path(candidates, kind="file"), dst, output_dir)
+    for dst, candidates in DIR_MAPPINGS.items():
+        _copy_tree(_resolve_existing_path(candidates, kind="directory"), dst, output_dir)
     for src, dst in FILE_MAPPINGS.items():
         _copy_file(src, dst, output_dir)
     for src, dst in WEB_DIR_MAPPINGS.items():
