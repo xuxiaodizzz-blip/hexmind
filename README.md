@@ -1,10 +1,16 @@
 # HexMind
 
 <div align="center">
+  <p>
+    <a href="https://github.com/xuxiaodizzz-blip/hexmind/actions/workflows/ci.yml"><img src="https://github.com/xuxiaodizzz-blip/hexmind/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+    <a href="https://github.com/xuxiaodizzz-blip/hexmind/releases/latest"><img src="https://img.shields.io/github/v/release/xuxiaodizzz-blip/hexmind" alt="Latest release" /></a>
+    <a href="https://github.com/xuxiaodizzz-blip/hexmind/blob/main/LICENSE"><img src="https://img.shields.io/github/license/xuxiaodizzz-blip/hexmind" alt="MIT license" /></a>
+    <a href="https://github.com/xuxiaodizzz-blip/hexmind/stargazers"><img src="https://img.shields.io/github/stars/xuxiaodizzz-blip/hexmind?style=social" alt="GitHub stars" /></a>
+  </p>
   <img src="docs/public/assets/hexmind-demo.gif" alt="HexMind demo showing persona orchestration, live discussion streaming, and analytics panels" width="920" />
   <p><strong>Multi-expert debate, live streaming, and inspectable decision trails.</strong></p>
   <p>
-    <a href="https://github.com/xuxiaodizzz-blip/hexmind/releases/tag/v0.1.0">Latest Release</a>
+    <a href="https://github.com/xuxiaodizzz-blip/hexmind/releases/latest">Latest Release</a>
     ·
     <a href="#quick-start">Quick Start</a>
     ·
@@ -31,6 +37,12 @@ HexMind is built for decisions that benefit from structured disagreement:
 - Server-Sent Events stream the discussion live as it unfolds.
 - Archive and analytics layers make the decision trail inspectable after the run.
 
+## What Makes It Different
+
+- It treats role prompts and hat protocols as separate building blocks instead of baking every bias into one monolithic system prompt.
+- It is local-first, so you can explore the decision engine without depending on a hosted SaaS control plane.
+- It keeps a visible reasoning trail, which makes it easier to audit, replay, and debug how a conclusion was formed.
+
 ## What This Public Repo Includes
 
 - `src/hexmind/`: core engine, auth, archive, API, knowledge, and CLI code
@@ -53,6 +65,17 @@ HexMind is built for decisions that benefit from structured disagreement:
 - FastAPI backend with streaming discussion endpoints
 - React frontend for history, analytics, teams, and discussion views
 - Archive and export paths for replayable decisions
+
+## Try In 60 Seconds
+
+```bash
+pip install -e ".[dev]"
+hexmind personas
+hexmind prompts
+hexmind ask "Should we use Kubernetes for a small product team?" --model gpt-4o-mini
+```
+
+If the repository looks useful for your own agent workflows, architecture reviews, or product debates, give it a star so you can find it again.
 
 ## Quick Start
 
@@ -103,6 +126,12 @@ That makes it easy to run the same codebase against:
 - the public sample asset bundle in this repository
 - a fuller private asset bundle in the hosted product
 
+## Example Use Cases
+
+- Product strategy: should we launch a new feature now or validate demand first?
+- Technical architecture: should a small team introduce Kubernetes, queues, or event sourcing?
+- Team alignment: how do product, engineering, and facilitator roles surface different risks before a commit is made?
+
 ## Open-Source Dependencies
 
 This release uses capabilities from several GitHub-hosted open-source projects, including FastAPI, SQLAlchemy, LiteLLM, Instructor, React, Vite, Tailwind CSS, Recharts, Lucide React, Click, and Rich.
@@ -112,6 +141,24 @@ See `ATTRIBUTIONS.md` for a concise breakdown of how those projects are used in 
 ## Demo Asset
 
 The animated preview at the top of this README is generated from `docs/public/assets/hexmind-demo.gif`.
+
+For social sharing, a static preview image is also generated at `docs/public/assets/hexmind-social-preview.png`.
+
+## Architecture At A Glance
+
+```mermaid
+flowchart LR
+    User["User Question"] --> CLI["CLI / Web UI / API"]
+    CLI --> Orchestrator["HexMind Orchestrator"]
+    Orchestrator --> Personas["Persona Prompts"]
+    Orchestrator --> Hats["Hat Protocols"]
+    Orchestrator --> Stream["SSE Stream"]
+    Orchestrator --> Archive["Archive + Analytics"]
+    Personas --> Decision["Decision Summary"]
+    Hats --> Decision
+    Stream --> Decision
+    Archive --> Decision
+```
 
 ## Repository Layout
 
@@ -135,9 +182,16 @@ python -X utf8 scripts/prepare_public_repo.py --overwrite
 
 The script writes an export to `exports/github-public/`.
 
+## Community
+
+- Read contribution guidance in [CONTRIBUTING.md](CONTRIBUTING.md)
+- Report sensitive issues through the process described in [SECURITY.md](SECURITY.md)
+- Use [Issues](https://github.com/xuxiaodizzz-blip/hexmind/issues) for bugs and feature requests
+- Use [Discussions](https://github.com/xuxiaodizzz-blip/hexmind/discussions) for roadmap questions and open-ended ideas when enabled
+
 ## Status
 
-Current package version: `0.1.0`
+Current package version: `0.1.1`
 
 This repository is already covered by the automated test suite included in `tests/`, and the public release intentionally ships with sample assets instead of the full hosted library.
 

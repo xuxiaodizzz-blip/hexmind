@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "docs" / "public" / "assets"
 GIF_PATH = OUTPUT_DIR / "hexmind-demo.gif"
 POSTER_PATH = OUTPUT_DIR / "hexmind-demo-poster.png"
+SOCIAL_PREVIEW_PATH = OUTPUT_DIR / "hexmind-social-preview.png"
 
 WIDTH = 960
 HEIGHT = 600
@@ -46,6 +47,9 @@ FONT_H2 = _load_font(28, bold=True)
 FONT_BODY = _load_font(18)
 FONT_SMALL = _load_font(14)
 FONT_TINY = _load_font(12)
+FONT_SOCIAL_H1 = _load_font(52, bold=True)
+FONT_SOCIAL_H2 = _load_font(24, bold=True)
+FONT_SOCIAL_BODY = _load_font(22)
 
 
 def _new_canvas() -> Image.Image:
@@ -250,10 +254,67 @@ def build_demo_gif() -> tuple[Path, Path]:
     return GIF_PATH, POSTER_PATH
 
 
+def build_social_preview() -> Path:
+    """Generate a static social preview image for repository sharing cards."""
+    width = 1280
+    height = 640
+    image = Image.new("RGB", (width, height), BG)
+    draw = ImageDraw.Draw(image)
+
+    for y in range(height):
+        mix = y / height
+        r = int(9 + (22 - 9) * mix)
+        g = int(14 + (32 - 14) * mix)
+        b = int(22 + (56 - 22) * mix)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+    glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    glow_draw = ImageDraw.Draw(glow)
+    glow_draw.ellipse((-180, -140, 440, 360), fill=(0, 229, 255, 44))
+    glow_draw.ellipse((820, 120, 1380, 700), fill=(124, 156, 255, 40))
+    glow = glow.filter(ImageFilter.GaussianBlur(84))
+    image = Image.alpha_composite(image.convert("RGBA"), glow).convert("RGB")
+    draw = ImageDraw.Draw(image)
+
+    _rounded(draw, (58, 56, 1222, 584), fill="#0f1521", outline=BORDER, radius=32, width=2)
+    _rounded(draw, (96, 92, 156, 152), fill="#0f1b27", outline=ACCENT, radius=18, width=2)
+    draw.text((180, 96), "HexMind", font=FONT_SOCIAL_H1, fill=TEXT)
+    draw.text((182, 162), "Multi-expert AI decision engine", font=FONT_SOCIAL_BODY, fill=MUTED)
+    draw.text((182, 224), "Persona orchestration + Six Thinking Hats + live streaming + replayable decision trails", font=FONT_SOCIAL_H2, fill=TEXT)
+
+    _chip(draw, 184, 286, "FastAPI", ACCENT)
+    _chip(draw, 312, 286, "React UI", SUCCESS)
+    _chip(draw, 442, 286, "CLI", ACCENT_ALT)
+    _chip(draw, 544, 286, "Open-core", "#f6f09a")
+
+    left_x = 184
+    top_y = 352
+    _persona_card(draw, left_x, top_y, "Backend Engineer", "Reliability and APIs", ACCENT)
+    _persona_card(draw, left_x + 214, top_y + 16, "Product Manager", "Scope and user value", SUCCESS)
+    _persona_card(draw, left_x + 428, top_y, "Facilitator", "Synthesis and next steps", ACCENT_ALT)
+
+    draw.text((900, 114), "Why teams star it", font=FONT_SOCIAL_H2, fill=TEXT)
+    bullets = [
+        "Structured disagreement instead of one-shot prompting",
+        "Sample assets included for immediate local use",
+        "Readable archives and analytics after each run",
+    ]
+    for idx, bullet in enumerate(bullets):
+        y = 178 + idx * 70
+        draw.ellipse((904, y + 8, 920, y + 24), fill=ACCENT)
+        draw.text((936, y), bullet, font=FONT_SMALL, fill=MUTED)
+
+    draw.text((900, 418), "github.com/xuxiaodizzz-blip/hexmind", font=FONT_SMALL, fill=ACCENT)
+    image.save(SOCIAL_PREVIEW_PATH, optimize=True)
+    return SOCIAL_PREVIEW_PATH
+
+
 def main() -> None:
     gif_path, poster_path = build_demo_gif()
+    social_preview_path = build_social_preview()
     print(f"GIF written to: {gif_path}")
     print(f"Poster written to: {poster_path}")
+    print(f"Social preview written to: {social_preview_path}")
 
 
 if __name__ == "__main__":

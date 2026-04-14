@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an improvement for the public HexMind repository.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an idea.
+        The strongest requests explain the user problem first, then the proposed shape of the solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user or developer problem does this solve?
+      placeholder: It is hard to compare hat outputs side by side during a discussion replay.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change you want to see.
+      placeholder: Add a split-panel replay view grouped by hat color and persona.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Mention other approaches if you explored them.
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Small UX improvement
+        - New feature
+        - Documentation improvement
+        - API improvement
+        - CLI improvement
+    validations:
+      required: true

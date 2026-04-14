@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hexmind"
-version = "0.1.0"
+version = "0.1.1"
 description = "Six Hats Multi-Expert AI Decision Engine"
 readme = "README.md"
 license = "MIT"
@@ -42,6 +42,7 @@ dev = [
     "pytest-cov",
     "ruff",
     "mypy",
+    "Pillow>=12.0",
 ]
 
 [project.scripts]

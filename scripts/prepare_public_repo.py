@@ -11,6 +11,8 @@ DEFAULT_OUTPUT_DIR = ROOT / "exports" / "github-public"
 
 ROOT_FILE_MAPPINGS: dict[str, str] = {
     "ATTRIBUTIONS.md": "ATTRIBUTIONS.md",
+    "CONTRIBUTING.md": "CONTRIBUTING.md",
+    "SECURITY.md": "SECURITY.md",
     ".env.example": ".env.example",
     ".gitignore": ".gitignore",
     "LICENSE": "LICENSE",
@@ -19,6 +21,7 @@ ROOT_FILE_MAPPINGS: dict[str, str] = {
 }
 
 DIR_MAPPINGS: dict[str, str] = {
+    ".github": ".github",
     "src": "src",
     "tests": "tests",
     "docs/public": "docs/public",
