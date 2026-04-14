@@ -21,6 +21,8 @@ def test_export_public_repo_creates_clean_snapshot(tmp_path):
     assert (output_dir / "personas" / "tech" / "backend-engineer.yaml").exists()
     assert (output_dir / "prompts" / "library" / "帽子协议" / "hat-white.yaml").exists()
     assert (output_dir / "docs" / "public" / "open-source-boundary.md").exists()
+    assert (output_dir / "docs" / "public" / "assets" / "hexmind-demo.gif").exists()
+    assert (output_dir / "scripts" / "render_readme_demo_gif.py").exists()
     assert not (output_dir / "personas" / "raw").exists()
     assert not (output_dir / "web" / "node_modules").exists()
     assert not (output_dir / "web" / "dist").exists()
@@ -44,3 +46,18 @@ def test_export_public_repo_requires_overwrite(tmp_path):
     assert exported == output_dir
     assert not (output_dir / "stale.txt").exists()
     assert (output_dir / "README.md").exists()
+
+
+def test_export_public_repo_overwrite_preserves_git_directory(tmp_path):
+    output_dir = tmp_path / "github-public"
+    git_dir = output_dir / ".git"
+    git_dir.mkdir(parents=True)
+    head_file = git_dir / "HEAD"
+    head_file.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (output_dir / "stale.txt").write_text("stale", encoding="utf-8")
+
+    exported = export_public_repo(output_dir, overwrite=True)
+
+    assert exported == output_dir
+    assert head_file.exists()
+    assert not (output_dir / "stale.txt").exists()

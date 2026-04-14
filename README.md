@@ -1,5 +1,18 @@
 # HexMind
 
+<div align="center">
+  <img src="docs/public/assets/hexmind-demo.gif" alt="HexMind demo showing persona orchestration, live discussion streaming, and analytics panels" width="920" />
+  <p><strong>Multi-expert debate, live streaming, and inspectable decision trails.</strong></p>
+  <p>
+    <a href="https://github.com/xuxiaodizzz-blip/hexmind/releases/tag/v0.1.0">Latest Release</a>
+    ·
+    <a href="#quick-start">Quick Start</a>
+    ·
+    <a href="#core-capabilities">Core Capabilities</a>
+  </p>
+  <p><sub>Open-core edition · Sample asset pack · MIT licensed</sub></p>
+</div>
+
 HexMind is a multi-expert AI decision engine that combines persona-based analysis, the Six Thinking Hats protocol, real-time streaming, and a local-first workflow.
 
 This public repository is the open-core edition of HexMind:
@@ -95,6 +108,10 @@ That makes it easy to run the same codebase against:
 This release uses capabilities from several GitHub-hosted open-source projects, including FastAPI, SQLAlchemy, LiteLLM, Instructor, React, Vite, Tailwind CSS, Recharts, Lucide React, Click, and Rich.
 
 See `ATTRIBUTIONS.md` for a concise breakdown of how those projects are used in this codebase.
+
+## Demo Asset
+
+The animated preview at the top of this README is generated from `docs/public/assets/hexmind-demo.gif`.
 
 ## Repository Layout
 

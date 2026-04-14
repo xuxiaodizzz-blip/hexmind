@@ -34,6 +34,7 @@ FILE_MAPPINGS: dict[str, str] = {
     "web/vite.config.ts": "web/vite.config.ts",
     "scripts/generate_persona.py": "scripts/generate_persona.py",
     "scripts/prepare_public_repo.py": "scripts/prepare_public_repo.py",
+    "scripts/render_readme_demo_gif.py": "scripts/render_readme_demo_gif.py",
     "scripts/rebuild_prompt_library.py": "scripts/rebuild_prompt_library.py",
 }
 
@@ -71,6 +72,18 @@ def _copy_tree(relative_src: str, relative_dst: str, output_dir: Path) -> None:
     shutil.copytree(src, dst, dirs_exist_ok=True, ignore=EXPORT_IGNORE)
 
 
+def _reset_output_dir(output_dir: Path) -> None:
+    """Clear exported contents while preserving an existing Git repo."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for path in output_dir.iterdir():
+        if path.name == ".git":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
 def export_public_repo(output_dir: Path = DEFAULT_OUTPUT_DIR, *, overwrite: bool = False) -> Path:
     """Create a clean public export from the current private workspace."""
     output_dir = Path(output_dir)
@@ -80,9 +93,9 @@ def export_public_repo(output_dir: Path = DEFAULT_OUTPUT_DIR, *, overwrite: bool
                 f"Output directory already exists: {output_dir}. "
                 "Pass --overwrite to replace it."
             )
-        shutil.rmtree(output_dir)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
+        _reset_output_dir(output_dir)
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     for src, dst in ROOT_FILE_MAPPINGS.items():
         _copy_file(src, dst, output_dir)
