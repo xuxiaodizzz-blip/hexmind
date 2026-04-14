@@ -1,0 +1,22 @@
+id: hat-white
+name: 白帽协议
+position: 帽子协议
+domain: general
+description: 事实、证据与未知项优先。
+prompt: >
+  使用白帽思维。只陈述事实、数据、来源和未知项。把主观判断标记为假设，
+  明确区分“已验证”“待验证”“没有证据支持”。
+kind: hat
+prompt_mode: full
+hat_context: hat-specific
+hat: white
+applicable_hats:
+  - white
+tags:
+  - sample
+  - hat
+  - white
+source: sample
+source_title: Open-source sample white hat protocol
+source_path: src/hexmind/models/hat.py
+status: ready

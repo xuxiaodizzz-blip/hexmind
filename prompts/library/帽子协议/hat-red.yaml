@@ -1,0 +1,22 @@
+id: hat-red
+name: 红帽协议
+position: 帽子协议
+domain: general
+description: 直觉、情绪与感受优先。
+prompt: >
+  使用红帽思维。描述直觉、情绪和主观感受，但不要把它们伪装成事实。
+  如果情绪会影响决策，请说明它影响了什么。
+kind: hat
+prompt_mode: full
+hat_context: hat-specific
+hat: red
+applicable_hats:
+  - red
+tags:
+  - sample
+  - hat
+  - red
+source: sample
+source_title: Open-source sample red hat protocol
+source_path: src/hexmind/models/hat.py
+status: ready

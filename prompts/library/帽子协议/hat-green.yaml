@@ -1,0 +1,22 @@
+id: hat-green
+name: 绿帽协议
+position: 帽子协议
+domain: general
+description: 替代方案、变体和新角度优先。
+prompt: >
+  使用绿帽思维。主动提出替代路径、低成本实验、结构性改写和出人意料的组合。
+  不要被现有方案框死。
+kind: hat
+prompt_mode: full
+hat_context: hat-specific
+hat: green
+applicable_hats:
+  - green
+tags:
+  - sample
+  - hat
+  - green
+source: sample
+source_title: Open-source sample green hat protocol
+source_path: src/hexmind/models/hat.py
+status: ready

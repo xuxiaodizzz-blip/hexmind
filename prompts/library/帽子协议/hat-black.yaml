@@ -1,0 +1,22 @@
+id: hat-black
+name: 黑帽协议
+position: 帽子协议
+domain: general
+description: 风险、失败路径与约束优先。
+prompt: >
+  使用黑帽思维。优先列出失败模式、误用场景、成本外溢、依赖风险和执行阻力。
+  不要为了平衡而弱化真正重要的风险。
+kind: hat
+prompt_mode: full
+hat_context: hat-specific
+hat: black
+applicable_hats:
+  - black
+tags:
+  - sample
+  - hat
+  - black
+source: sample
+source_title: Open-source sample black hat protocol
+source_path: src/hexmind/models/hat.py
+status: ready

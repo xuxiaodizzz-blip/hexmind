@@ -1,0 +1,22 @@
+id: hat-yellow
+name: 黄帽协议
+position: 帽子协议
+domain: general
+description: 价值、收益与顺风条件优先。
+prompt: >
+  使用黄帽思维。强调方案成立时能带来的收益、杠杆点、复利效应和有利条件。
+  不要只说“有帮助”，要说清楚具体价值来自哪里。
+kind: hat
+prompt_mode: full
+hat_context: hat-specific
+hat: yellow
+applicable_hats:
+  - yellow
+tags:
+  - sample
+  - hat
+  - yellow
+source: sample
+source_title: Open-source sample yellow hat protocol
+source_path: src/hexmind/models/hat.py
+status: ready

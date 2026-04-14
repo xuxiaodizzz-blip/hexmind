@@ -1,0 +1,48 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyo
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# JS / frontend
+node_modules/
+web/node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archives
+discussion_archive/
+
+# Database
+*.db
+*.sqlite3
+
+# Logs and local output
+*.log
+exports/
+
+# OS
+.DS_Store
+Thumbs.db
