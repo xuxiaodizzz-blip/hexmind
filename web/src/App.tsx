@@ -1,14 +1,13 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { SignedIn, SignedOut, RedirectToSignIn } from '@clerk/clerk-react';
 import { cn } from './lib/utils';
+import { CLERK_ENABLED } from './lib/runtime';
 
 // Layout
 import Sidebar from './components/layout/Sidebar';
 
 // Pages
-import LandingPage from './pages/LandingPage';
-import Login from './pages/Login';
-import Register from './pages/Register';
 import Overview from './pages/Overview';
 import NewDiscussion from './pages/NewDiscussion';
 import Discussion from './pages/Discussion';
@@ -17,7 +16,10 @@ import Personas from './pages/Personas';
 import Assets from './pages/Assets';
 import Teams from './pages/Teams';
 import Settings from './pages/Settings';
-import Features from './pages/Features';
+import SignInPage from './pages/SignInPage';
+import SignUpPage from './pages/SignUpPage';
+// PRICING_V2 (disabled for MVP):
+// import Billing from './pages/Billing';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
@@ -52,11 +54,26 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 }
 
 // Pages that do NOT show the sidebar
-const NO_SIDEBAR_PATHS = ['/', '/login', '/register', '/features'];
+const NO_SIDEBAR_PATHS = ['/sign-in', '/sign-up'];
+
+/** Wraps a route element: in Clerk mode, redirects unauthenticated users to sign-in. */
+function Protected({ children }: { children: React.ReactNode }) {
+  if (!CLERK_ENABLED) return <>{children}</>;
+  return (
+    <>
+      <SignedIn>{children}</SignedIn>
+      <SignedOut>
+        <RedirectToSignIn />
+      </SignedOut>
+    </>
+  );
+}
 
 export default function App() {
   const location = useLocation();
-  const showSidebar = !NO_SIDEBAR_PATHS.includes(location.pathname);
+  const showSidebar = !NO_SIDEBAR_PATHS.some((p) =>
+    location.pathname === p || location.pathname.startsWith(p + '/')
+  );
 
   return (
     <ErrorBoundary>
@@ -70,21 +87,22 @@ export default function App() {
           )}
         >
           <Routes>
-            {/* Public routes */}
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/features" element={<Features />} />
+            {/* Auth pages — Clerk hosted UI */}
+            <Route path="/sign-in/*" element={<SignInPage />} />
+            <Route path="/sign-up/*" element={<SignUpPage />} />
 
-            {/* App routes */}
-            <Route path="/app" element={<Overview />} />
-            <Route path="/app/new" element={<NewDiscussion />} />
-            <Route path="/app/discussion/:id" element={<Discussion />} />
-            <Route path="/app/history" element={<HistoryPage />} />
-            <Route path="/app/personas" element={<Personas />} />
-            <Route path="/app/assets" element={<Assets />} />
-            <Route path="/app/teams" element={<Teams />} />
-            <Route path="/app/settings" element={<Settings />} />
+            {/* App routes — protected when Clerk is enabled */}
+            <Route path="/" element={<Protected><Overview /></Protected>} />
+            <Route path="/new" element={<Protected><NewDiscussion /></Protected>} />
+            <Route path="/discussion/:id" element={<Protected><Discussion /></Protected>} />
+            <Route path="/history" element={<Protected><HistoryPage /></Protected>} />
+            <Route path="/personas" element={<Protected><Personas /></Protected>} />
+            <Route path="/assets" element={<Protected><Assets /></Protected>} />
+            <Route path="/teams" element={<Protected><Teams /></Protected>} />
+            <Route path="/settings" element={<Protected><Settings /></Protected>} />
+            {/* PRICING_V2 (disabled for MVP):
+                <Route path="/billing" element={<Protected><Billing /></Protected>} />
+            */}
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />

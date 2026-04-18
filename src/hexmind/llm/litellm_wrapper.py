@@ -6,7 +6,13 @@ from typing import Any, Literal
 
 import litellm
 
-from hexmind.models.llm import LLMResponse, TokenPricing, TokenUsage
+from hexmind.llm.demo_provider import (
+    build_demo_response,
+    canned_completion,
+    is_demo_mode,
+)
+from hexmind.llm.requesty_transport import RequestyTransport
+from hexmind.models.llm import LLMResponse, TokenPricing
 
 
 class LiteLLMWrapper:
@@ -16,12 +22,27 @@ class LiteLLMWrapper:
     for 100+ models via a single interface.
     """
 
-    def __init__(self, model: str = "gpt-4o", api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str = "gpt-4o",
+        api_key: str | None = None,
+        api_base: str | None = None,
+    ) -> None:
         self._model = model
-        if api_key:
-            litellm.api_key = api_key
+        self._api_key = api_key
+        self._api_base = api_base
+        self._transport: RequestyTransport | None = None
+        litellm.api_key = api_key or litellm.api_key
         # Suppress litellm debug noise
         litellm.suppress_debug_info = True
+
+    def _get_transport(self) -> RequestyTransport:
+        if self._transport is None:
+            self._transport = RequestyTransport(
+                api_key=self._api_key,
+                api_base=self._api_base,
+            )
+        return self._transport
 
     # ── Core completion ─────────────────────────────────────────────
 
@@ -34,6 +55,11 @@ class LiteLLMWrapper:
         max_tokens: int = 2000,
         response_format: Literal["text", "json"] = "text",
     ) -> LLMResponse:
+        if is_demo_mode():
+            return build_demo_response(
+                canned_completion(system_prompt, user_prompt),
+                self._model,
+            )
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": [
@@ -46,30 +72,29 @@ class LiteLLMWrapper:
         if response_format == "json":
             kwargs["response_format"] = {"type": "json_object"}
 
-        resp = await litellm.acompletion(**kwargs)
-        choice = resp.choices[0]
-        usage = resp.usage
-
-        return LLMResponse(
-            content=choice.message.content or "",
-            usage=TokenUsage(
-                input_tokens=usage.prompt_tokens if usage else 0,
-                output_tokens=usage.completion_tokens if usage else 0,
-                total_tokens=usage.total_tokens if usage else 0,
-            ),
-            model=resp.model or self._model,
-            finish_reason=choice.finish_reason or "stop",
+        return await self._get_transport().complete(
+            model=kwargs["model"],
+            messages=kwargs["messages"],
+            temperature=kwargs["temperature"],
+            max_tokens=kwargs["max_tokens"],
+            response_format=kwargs.get("response_format"),
         )
 
     # ── Token accounting ────────────────────────────────────────────
 
     def count_tokens(self, text: str) -> int:
         """Count tokens for a plain text string."""
-        return litellm.token_counter(model=self._model, text=text)
+        try:
+            return litellm.token_counter(model=self._model, text=text)
+        except Exception:
+            return max(1, len(text) // 4)
 
     def count_messages_tokens(self, messages: list[dict[str, str]]) -> int:
         """Count tokens for a messages list (includes role/format overhead)."""
-        return litellm.token_counter(model=self._model, messages=messages)
+        try:
+            return litellm.token_counter(model=self._model, messages=messages)
+        except Exception:
+            return sum(self.count_tokens(item.get("content", "")) for item in messages)
 
     # ── Model metadata ──────────────────────────────────────────────
 

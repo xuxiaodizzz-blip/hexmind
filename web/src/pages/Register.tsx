@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Hexagon } from 'lucide-react';
+import { useLanguage } from '../hooks/useLanguage';
 import * as api from '../lib/api';
 
 export default function Register() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,7 +22,7 @@ export default function Register() {
       await api.register(email, displayName, password);
       navigate('/app');
     } catch (err) {
-      setError(err instanceof api.ApiError ? err.message : '注册失败，请重试');
+      setError(err instanceof api.ApiError ? err.message : t('register.error'));
     } finally {
       setLoading(false);
     }
@@ -51,8 +53,8 @@ export default function Register() {
         </Link>
 
         <div className="bg-[#151a23] border border-white/5 rounded-2xl p-8 shadow-lg">
-          <h2 className="text-2xl font-bold font-sans mb-2 text-center">Create Account</h2>
-          <p className="text-white/50 font-serif italic text-sm text-center mb-8">Join the Archive</p>
+          <h2 className="text-2xl font-bold font-sans mb-2 text-center">{t('register.title')}</h2>
+          <p className="text-white/50 font-serif italic text-sm text-center mb-8">{t('register.subtitle')}</p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
@@ -61,7 +63,7 @@ export default function Register() {
               </div>
             )}
             <div>
-              <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">Display Name</label>
+              <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">{t('register.displayName')}</label>
               <input
                 type="text"
                 value={displayName}
@@ -72,7 +74,7 @@ export default function Register() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">Email</label>
+              <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">{t('register.email')}</label>
               <input
                 type="email"
                 value={email}
@@ -83,7 +85,7 @@ export default function Register() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">Password</label>
+              <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">{t('register.password')}</label>
               <input
                 type="password"
                 value={password}
@@ -99,24 +101,24 @@ export default function Register() {
               disabled={loading}
               className="w-full bg-[#00e5ff] hover:bg-[#00cce6] text-black font-bold py-3.5 rounded-xl transition-colors shadow-[0_0_20px_rgba(0,229,255,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? '注册中...' : 'Create Account'}
+              {loading ? t('register.loading') : t('register.submit')}
             </button>
           </form>
 
           {/* OAuth Placeholder */}
           <div className="mt-6 pt-6 border-t border-white/5 space-y-3">
             <button disabled className="w-full bg-[#1e2430] border border-white/5 text-white/30 py-3 rounded-xl text-sm font-medium cursor-not-allowed">
-              Continue with Google — Coming Soon
+              {t('login.googleSoon')}
             </button>
             <button disabled className="w-full bg-[#1e2430] border border-white/5 text-white/30 py-3 rounded-xl text-sm font-medium cursor-not-allowed">
-              Continue with GitHub — Coming Soon
+              {t('login.githubSoon')}
             </button>
           </div>
 
           <p className="text-center text-sm text-white/40 mt-6">
-            Already have an account?{' '}
+            {t('register.haveAccount')}{' '}
             <Link to="/login" className="text-[#00e5ff] hover:underline">
-              Sign in
+              {t('register.signIn')}
             </Link>
           </p>
         </div>

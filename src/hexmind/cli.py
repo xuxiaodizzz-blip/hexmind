@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load .env before any LLM/config imports
 
+from hexmind.config import load_config
 from hexmind.archive.reader import ArchiveReader
 from hexmind.archive.search import ArchiveSearch
 from hexmind.engine.orchestrator import Orchestrator
@@ -17,6 +18,7 @@ from hexmind.events.bus import EventBus
 from hexmind.events.consumers.archive_writer import ArchiveWriter
 from hexmind.events.consumers.cli_printer import CLIPrinter
 from hexmind.llm.litellm_wrapper import LiteLLMWrapper
+from hexmind.model_catalog import load_model_catalog
 from hexmind.models.config import DiscussionConfig
 from hexmind.personas.loader import PersonaLoader
 from hexmind.prompt_library.loader import PromptLibraryLoader
@@ -31,31 +33,57 @@ def cli():
 @cli.command()
 @click.argument("question")
 @click.option("--persona", "-p", multiple=True, help="Persona ID (repeatable)")
-@click.option("--model", "-m", default="gpt-4o", help="LLM model name")
+@click.option("--model", "-m", default=None, help="LLM model name (defaults to env config)")
 @click.option("--budget", "-b", default=50000, type=int, help="Token budget")
-@click.option("--locale", "-l", default="zh", type=click.Choice(["zh", "en"]))
+@click.option(
+    "--discussion-locale",
+    "--locale",
+    "-l",
+    default="zh",
+    type=click.Choice(["zh", "en"]),
+)
 @click.option("--archive/--no-archive", default=True, help="Enable/disable archiving")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def discuss(question, persona, model, budget, locale, archive, verbose):
+def discuss(question, persona, model, budget, discussion_locale, archive, verbose):
     """Start a Six Hats discussion."""
     asyncio.run(
-        _discuss(question, persona, model, budget, locale, archive, verbose)
+        _discuss(
+            question,
+            persona,
+            model,
+            budget,
+            discussion_locale,
+            archive,
+            verbose,
+        )
     )
 
 
 async def _discuss(
     question: str,
     persona_ids: tuple[str, ...],
-    model: str,
+    model: str | None,
     budget: int,
-    locale: str,
+    discussion_locale: str,
     archive_flag: bool,
     verbose: bool,
 ) -> None:
+    config_defaults = load_config()
+    catalog = load_model_catalog()
+    selected_id = model or catalog.default_model_id
+    try:
+        selected_model = catalog.resolve(selected_id)
+    except KeyError as exc:
+        raise click.ClickException(f"Unknown model alias: {selected_id}") from exc
+    fallback_model = catalog.fallback_for(selected_model.id)
     config = DiscussionConfig(
-        token_budget=budget,
-        default_model=model,
-        locale=locale,
+        execution_token_cap=budget,
+        resolved_model_slug=selected_model.slug,
+        resolved_fallback_model_slug=fallback_model.slug,
+        selected_model_id=selected_model.id,
+        fallback_model_id=fallback_model.id,
+        discussion_locale=discussion_locale,
+        archive_dir=config_defaults.archive_dir,
     )
 
     loader = PersonaLoader()
@@ -66,7 +94,7 @@ async def _discuss(
         all_personas = loader.load_all()
         personas = _auto_select_personas(all_personas, count=3)
 
-    llm = LiteLLMWrapper(model=model)
+    llm = LiteLLMWrapper(model=selected_model.slug)
 
     bus = EventBus()
     printer = CLIPrinter(verbose=verbose)

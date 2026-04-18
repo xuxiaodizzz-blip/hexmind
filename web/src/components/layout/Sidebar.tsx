@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'motion/react';
+import { UserButton } from '@clerk/clerk-react';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -8,25 +9,30 @@ import {
   FolderOpen,
   UsersRound,
   Settings as SettingsIcon,
+  // PRICING_V2 (disabled for MVP): CreditCard,
   Plus,
-  ArrowLeftRight,
-  LogOut,
   Hexagon,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useLanguage } from '../../hooks/useLanguage';
+import type { TranslationKey } from '../../i18n/en';
+import { LOCAL_ONLY_MODE, CLERK_ENABLED } from '../../lib/runtime';
 
-const navItems = [
-  { name: 'Dashboard', path: '/app', icon: LayoutDashboard },
-  { name: 'New Discussion', path: '/app/new', icon: MessageSquare, highlight: true },
-  { name: 'History', path: '/app/history', icon: History },
-  { name: 'Personas', path: '/app/personas', icon: Users },
-  { name: 'Assets', path: '/app/assets', icon: FolderOpen },
-  { name: 'Teams', path: '/app/teams', icon: UsersRound },
-  { name: 'Settings', path: '/app/settings', icon: SettingsIcon },
+const navItems: { nameKey: TranslationKey; path: string; icon: typeof LayoutDashboard; highlight?: boolean }[] = [
+  { nameKey: 'sidebar.dashboard', path: '/', icon: LayoutDashboard },
+  { nameKey: 'sidebar.newDiscussion', path: '/new', icon: MessageSquare, highlight: true },
+  { nameKey: 'sidebar.history', path: '/history', icon: History },
+  { nameKey: 'sidebar.personas', path: '/personas', icon: Users },
+  { nameKey: 'sidebar.assets', path: '/assets', icon: FolderOpen },
+  { nameKey: 'sidebar.teams', path: '/teams', icon: UsersRound },
+  // PRICING_V2 (disabled for MVP): Billing entry hidden until pricing model is set.
+  // { nameKey: 'sidebar.billing', path: '/billing', icon: CreditCard },
+  { nameKey: 'sidebar.settings', path: '/settings', icon: SettingsIcon },
 ];
 
 export default function Sidebar() {
   const location = useLocation();
+  const { t, locale } = useLanguage();
 
   return (
     <motion.aside
@@ -44,7 +50,7 @@ export default function Sidebar() {
             HexMind
           </h1>
           <p className="text-[9px] font-serif italic text-white/50 tracking-widest uppercase">
-            The Ethereal Archive
+            {t('sidebar.tagline')}
           </p>
         </div>
       </Link>
@@ -55,11 +61,11 @@ export default function Sidebar() {
           const Icon = item.icon;
           const isActive =
             location.pathname === item.path ||
-            (item.path !== '/app' && location.pathname.startsWith(item.path));
+            (item.path !== '/' && location.pathname.startsWith(item.path));
 
           return (
             <Link
-              key={item.name}
+              key={item.nameKey}
               to={item.path}
               className={cn(
                 'w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-300 relative',
@@ -71,7 +77,7 @@ export default function Sidebar() {
               )}
             >
               <Icon className="w-5 h-5" />
-              <span className="font-medium text-sm">{item.name}</span>
+              <span className="font-medium text-sm">{t(item.nameKey)}</span>
               {isActive && !item.highlight && (
                 <motion.div
                   layoutId="active-indicator"
@@ -92,26 +98,39 @@ export default function Sidebar() {
       {/* Bottom Actions */}
       <div className="p-6 space-y-6">
         <Link
-          to="/app/new"
+          to="/new"
           className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#00e5ff] text-black font-bold text-sm hover:bg-[#00cce6] transition-colors shadow-[0_0_20px_rgba(0,229,255,0.2)]"
         >
           <Plus className="w-5 h-5" />
-          New Analysis
+          {t('sidebar.newAnalysis')}
         </Link>
 
-        <div className="space-y-1 pt-4 border-t border-white/5">
-          <button className="w-full flex items-center gap-4 px-4 py-2 text-white/50 hover:text-white transition-colors">
-            <ArrowLeftRight className="w-4 h-4" />
-            <span className="font-medium text-sm">Switch Team</span>
-          </button>
-          <Link
-            to="/login"
-            className="w-full flex items-center gap-4 px-4 py-2 text-white/50 hover:text-white transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="font-medium text-sm">Logout</span>
-          </Link>
-        </div>
+        {CLERK_ENABLED ? (
+          <div className="flex items-center gap-3 px-1">
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: 'w-9 h-9',
+                  userButtonPopoverCard: 'bg-[#0e131d] border border-white/10',
+                  userButtonPopoverActionButton: 'text-white hover:bg-white/5',
+                  userButtonPopoverActionButtonText: 'text-white',
+                },
+              }}
+            />
+            <span className="text-sm text-white/50 font-medium">Account</span>
+          </div>
+        ) : LOCAL_ONLY_MODE ? (
+          <div className="rounded-2xl border border-white/5 bg-[#151a23] p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#00e5ff]">
+              {locale === 'en' ? 'Local Mode' : 'Local Mode'}
+            </p>
+            <p className="mt-2 text-sm text-white/60">
+              {locale === 'en'
+                ? 'Authentication is hidden. Preferences and drafts stay on this device.'
+                : 'Authentication is hidden. Preferences and drafts stay on this device.'}
+            </p>
+          </div>
+        ) : null}
       </div>
     </motion.aside>
   );

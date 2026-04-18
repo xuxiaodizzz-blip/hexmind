@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +13,9 @@ from hexmind.api.app import create_app
 from hexmind.api.registry import DiscussionRegistry
 from hexmind.api.sse import SSEStreamer
 from hexmind.events.bus import EventBus
-from hexmind.events.types import Event, EventType
+from hexmind.events.types import Event, EventType, RoundStartedPayload
+from hexmind.llm.requesty_transport import RequestyTransport
+from hexmind.models.llm import LLMResponse, TokenUsage
 
 
 # ── Fixtures ───────────────────────────────────────────────
@@ -41,6 +44,79 @@ def test_health(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert "database" in data
+
+
+def test_frontend_bundle_served_from_configured_dist(monkeypatch, tmp_path: Path):
+    dist_dir = tmp_path / "web-dist"
+    assets_dir = dist_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (dist_dir / "index.html").write_text("<html><body>HexMind Local</body></html>", encoding="utf-8")
+    (assets_dir / "app.js").write_text("console.log('hexmind');", encoding="utf-8")
+
+    monkeypatch.setenv("HEXMIND_WEB_DIST_DIR", str(dist_dir))
+
+    with TestClient(create_app(), raise_server_exceptions=False) as local_client:
+        index = local_client.get("/")
+        nested = local_client.get("/app/settings")
+        asset = local_client.get("/assets/app.js")
+
+    assert index.status_code == 200
+    assert "HexMind Local" in index.text
+    assert nested.status_code == 200
+    assert "HexMind Local" in nested.text
+    assert asset.status_code == 200
+    assert "console.log" in asset.text
+
+
+def test_get_settings_uses_backend_env(monkeypatch):
+    monkeypatch.setenv(
+        "HEXMIND_MODEL_MAP",
+        "opus=anthropic/claude-opus-4-6,gpt=openai/gpt-5.4,sonnet=anthropic/claude-sonnet-4-6",
+    )
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+    monkeypatch.setenv("HEXMIND_TOKEN_BUDGET", "75000")
+    monkeypatch.setenv("HEXMIND_MAX_ROUNDS", "9")
+    monkeypatch.setenv("HEXMIND_TIME_BUDGET", "900")
+    monkeypatch.setenv("HEXMIND_DISCUSSION_LOCALE", "en")
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.get("/api/settings/")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["default_model_id"] == "opus"
+    assert [model["id"] for model in data["models"]] == ["opus", "gpt", "sonnet"]
+    assert data["models"][0]["label"] == "OPUS4.6"
+    assert data["models"][1]["label"] == "GPT5.4"
+    assert data["models"][2]["label"] == "SONNET4.6"
+    assert data["models"][0]["capabilities"]["reasoning"] is True
+    assert data["default_analysis_depth"] == "standard"
+    assert [depth["id"] for depth in data["analysis_depths"]] == ["quick", "standard", "deep"]
+    assert data["default_execution_token_cap"] == 52500
+    assert data["default_discussion_max_rounds"] == 7
+    assert data["default_time_budget_seconds"] == 675
+    assert data["default_discussion_locale"] == "en"
+
+
+def test_app_startup_fails_fast_on_invalid_model_catalog(monkeypatch):
+    monkeypatch.setenv("HEXMIND_MODEL_MAP", "opus=anthropic/claude-opus-4-6")
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "gpt")
+
+    with pytest.raises(ValueError, match="HEXMIND_DEFAULT_MODEL_ALIAS"):
+        with TestClient(create_app(), raise_server_exceptions=False):
+            pass
+
+
+def test_billing_plans_expose_bilingual_copy(client):
+    resp = client.get("/api/billing/plans")
+    assert resp.status_code == 200
+
+    plans = {plan["id"]: plan for plan in resp.json()}
+    assert plans["free"]["name"] == "Free"
+    assert plans["free"]["name_zh"] == "免费版"
+    assert plans["free"]["features"][0]["text_zh"] == "每月 5 次讨论"
+    assert plans["pro"]["description_zh"] == "完整使用 GPT-5.4，充裕积分，满足专业决策需求。"
 
 
 # ── Personas ───────────────────────────────────────────────
@@ -155,6 +231,284 @@ def test_create_discussion_bad_persona(client):
     assert resp.status_code == 422
 
 
+def test_create_discussion_accepts_user_selected_model(monkeypatch):
+    monkeypatch.setenv(
+        "HEXMIND_MODEL_MAP",
+        "opus=anthropic/claude-opus-4-6,gpt=openai/gpt-5.4,sonnet=anthropic/claude-sonnet-4-6",
+    )
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/discussions/",
+            json={
+                "question": "Should we launch feature X?",
+                "persona_ids": ["backend-engineer", "cfo"],
+                "config": {"selected_model": "gpt"},
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
+
+
+def test_create_discussion_accepts_legacy_model_alias_field(monkeypatch):
+    monkeypatch.setenv(
+        "HEXMIND_MODEL_MAP",
+        "opus=anthropic/claude-opus-4-6,gpt=openai/gpt-5.4,sonnet=anthropic/claude-sonnet-4-6",
+    )
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/discussions/",
+            json={
+                "question": "Should we launch feature X?",
+                "persona_ids": ["backend-engineer", "cfo"],
+                "config": {"model": "opus"},
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
+
+
+def test_create_discussion_rejects_unknown_model_alias(monkeypatch):
+    monkeypatch.setenv("HEXMIND_MODEL_MAP", "opus=anthropic/claude-opus-4-6")
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/discussions/",
+            json={
+                "question": "Should we launch feature X?",
+                "persona_ids": ["backend-engineer", "cfo"],
+                "config": {"selected_model": "unknown"},
+            },
+        )
+
+    assert resp.status_code == 422
+    assert "Unknown selected_model" in resp.json()["detail"]
+
+
+def test_create_discussion_accepts_discussion_locale_and_legacy_alias(monkeypatch):
+    monkeypatch.setenv(
+        "HEXMIND_MODEL_MAP",
+        "opus=anthropic/claude-opus-4-6,gpt=openai/gpt-5.4",
+    )
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/discussions/",
+            json={
+                "question": "Should we launch feature X?",
+                "persona_ids": ["backend-engineer", "cfo"],
+                "config": {"discussion_locale": "en"},
+            },
+        )
+        legacy_resp = client.post(
+            "/api/discussions/",
+            json={
+                "question": "Should we launch feature Y?",
+                "persona_ids": ["backend-engineer", "cfo"],
+                "config": {"locale": "en"},
+            },
+        )
+
+    assert resp.status_code == 200
+    assert legacy_resp.status_code == 200
+
+
+def test_create_discussion_carries_round_and_time_overrides(monkeypatch):
+    import hexmind.api.routes_discussions as discussion_routes
+
+    monkeypatch.setenv(
+        "HEXMIND_MODEL_MAP",
+        "opus=anthropic/claude-opus-4-6,gpt=openai/gpt-5.4",
+    )
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+    monkeypatch.setenv("HEXMIND_TIME_BUDGET", "900")
+
+    captured: dict[str, object] = {}
+
+    class FakeOrchestrator:
+        def __init__(
+            self,
+            llm,
+            personas,
+            config,
+            bus,
+            knowledge_hub=None,
+            user_id=None,
+            team_id=None,
+            request_config_snapshot=None,
+        ) -> None:
+            captured["config"] = config
+            captured["request_config_snapshot"] = request_config_snapshot
+            self.last_run_status = None
+            self.last_terminal_reason = None
+
+        async def run(self, question: str) -> None:
+            return None
+
+        def get_billable_usage(self) -> TokenUsage:
+            return TokenUsage()
+
+        def has_partial_verdict(self) -> bool:
+            return False
+
+    monkeypatch.setattr(discussion_routes, "Orchestrator", FakeOrchestrator)
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/discussions/",
+            json={
+                "question": "Should we launch feature X?",
+                "persona_ids": ["backend-engineer", "cfo"],
+                "config": {
+                    "selected_model": "gpt",
+                    "discussion_max_rounds": 7,
+                    "time_budget_seconds": 900,
+                },
+            },
+        )
+
+    assert resp.status_code == 200
+    config = captured["config"]
+    request_snapshot = captured["request_config_snapshot"]
+    assert getattr(config, "discussion_max_rounds") == 7
+    assert getattr(config, "time_budget_seconds") == 900
+    assert request_snapshot["discussion_max_rounds"] == 7
+    assert request_snapshot["time_budget_seconds"] == 900
+
+
+def test_chat_route_resolves_selected_model_alias(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "shared-key")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://router.example/v1")
+    monkeypatch.setenv(
+        "HEXMIND_MODEL_MAP",
+        "opus=anthropic/claude-opus-4-6,gpt=openai/gpt-5.4,sonnet=anthropic/claude-sonnet-4-6",
+    )
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    async def fake_complete(self, *, model, messages, temperature=None, max_tokens=None, response_format=None):
+        assert model == "anthropic/claude-opus-4-6"
+        assert messages == [{"role": "user", "content": "Hello"}]
+        return LLMResponse(
+            content="Hi there",
+            usage=TokenUsage(total_tokens=5),
+            model=model,
+            finish_reason="stop",
+        )
+
+    monkeypatch.setattr(RequestyTransport, "complete", fake_complete)
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/chat/",
+            json={
+                "selected_model": "opus",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["selected_model"] == "opus"
+    assert data["resolved_model"] == "anthropic/claude-opus-4-6"
+    assert data["content"] == "Hi there"
+
+
+def test_chat_route_uses_default_model_alias_when_missing(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "shared-key")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://router.example/v1")
+    monkeypatch.setenv("HEXMIND_MODEL_MAP", "opus=anthropic/claude-opus-4-6")
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    async def fake_complete(self, *, model, messages, temperature=None, max_tokens=None, response_format=None):
+        assert model == "anthropic/claude-opus-4-6"
+        return LLMResponse(
+            content="Default model reply",
+            usage=TokenUsage(total_tokens=3),
+            model=model,
+            finish_reason="stop",
+        )
+
+    monkeypatch.setattr(RequestyTransport, "complete", fake_complete)
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/chat/",
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["selected_model"] == "opus"
+
+
+def test_chat_route_rejects_unknown_model_alias(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "shared-key")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://router.example/v1")
+    monkeypatch.setenv("HEXMIND_MODEL_MAP", "opus=anthropic/claude-opus-4-6")
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(
+            "/api/chat/",
+            json={
+                "selected_model": "gpt",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+    assert resp.status_code == 422
+    assert "Unknown selected_model" in resp.json()["detail"]
+
+
+def test_chat_route_streams_normalized_events(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "shared-key")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://router.example/v1")
+    monkeypatch.setenv(
+        "HEXMIND_MODEL_MAP",
+        "opus=anthropic/claude-opus-4-6,gpt=openai/gpt-5.4,sonnet=anthropic/claude-sonnet-4-6",
+    )
+    monkeypatch.setenv("HEXMIND_DEFAULT_MODEL_ALIAS", "opus")
+
+    async def fake_stream_completion(self, *, model, messages, temperature=None, max_tokens=None, response_format=None):
+        assert model == "openai/gpt-5.4"
+        yield {"event": "delta", "data": {"content": "Hi"}}
+        yield {"event": "done", "data": {"model": model, "finish_reason": "stop"}}
+
+    monkeypatch.setattr(RequestyTransport, "stream_completion", fake_stream_completion)
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        with client.stream(
+            "POST",
+            "/api/chat/",
+            json={
+                "selected_model": "gpt",
+                "stream": True,
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        ) as resp:
+            body = "".join(resp.iter_text())
+
+    assert "event: delta" in body
+    assert "event: done" in body
+    assert '"selected_model": "gpt"' in body
+    assert '"resolved_model": "openai/gpt-5.4"' in body
+
+
 def test_get_discussion_not_found(client):
     resp = client.get("/api/discussions/nonexistent")
     assert resp.status_code == 404
@@ -176,7 +530,10 @@ async def test_sse_streamer_basic_flow():
     q1 = streamer.create_listener()
     q2 = streamer.create_listener()
 
-    event = Event(type=EventType.ROUND_STARTED, data={"round": 1, "hat": "white"})
+    event = Event(
+        type=EventType.ROUND_STARTED,
+        payload=RoundStartedPayload(round=1, hat="white"),
+    )
     await streamer.on_event(event)
 
     msg1 = q1.get_nowait()
@@ -191,7 +548,10 @@ async def test_sse_streamer_replay():
     """New listener receives replayed events."""
     streamer = SSEStreamer()
 
-    event = Event(type=EventType.ROUND_STARTED, data={"round": 1, "hat": "white"})
+    event = Event(
+        type=EventType.ROUND_STARTED,
+        payload=RoundStartedPayload(round=1, hat="white"),
+    )
     await streamer.on_event(event)
 
     # Late joiner should get the replay
@@ -255,10 +615,15 @@ def test_registry_lifecycle():
         event_bus=bus,
     )
     assert entry.status == "running"
+    assert entry.run_state == "running"
+    assert entry.completion_status is None
     assert registry.get("test-1") is entry
 
-    registry.mark_completed("test-1", "converged")
+    registry.mark_completed("test-1", "converged", termination_reason="natural_convergence")
     assert entry.status == "converged"
+    assert entry.run_state == "completed"
+    assert entry.completion_status == "converged"
+    assert entry.termination_reason == "natural_convergence"
 
     assert len(registry.list_all()) == 1
 

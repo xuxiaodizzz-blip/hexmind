@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
 
 import yaml
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hexmind.archive.db_models import (
@@ -34,23 +36,41 @@ class ArchiveMigrator:
         migrated = 0
         for entry in entries:
             try:
-                await self._migrate_entry(entry)
-                migrated += 1
-                logger.info("Migrated: %s", entry.dir_name)
+                result = await self._migrate_entry(entry)
+                if result:  # empty string means skipped (already migrated)
+                    migrated += 1
+                    logger.info("Migrated: %s", entry.dir_name)
             except Exception:
                 logger.exception("Failed to migrate: %s", entry.dir_name)
         return migrated
 
     async def _migrate_entry(self, entry: ArchiveEntry) -> str:
         async with self._session_factory() as session:
+            source_tag = self._archive_source_tag(entry.dir_name)
+            # Idempotency should be based on archive source identity, not content similarity.
+            existing = await session.execute(
+                select(DiscussionTagDB.discussion_id)
+                .where(DiscussionTagDB.tag == source_tag)
+                .limit(1)
+            )
+            if existing.scalar_one_or_none() is not None:
+                logger.info("Already migrated, skipping: %s", entry.dir_name)
+                return ""
+
             # 1. Create discussion
             meta = entry.meta
             disc = DiscussionDB(
                 question=entry.question,
                 status=entry.status,
-                config={},
+                config={
+                    "request_config_snapshot": entry.meta.get("request_config_snapshot", {}),
+                    "runtime_config_snapshot": entry.meta.get("runtime_config_snapshot", {}),
+                    "migration_metadata": {
+                        "archive_source_dir": entry.dir_name,
+                    },
+                },
                 confidence=entry.confidence or None,
-                locale="zh",
+                discussion_locale="zh",
                 model_used=meta.get("model_used"),
             )
             if entry.verdict:
@@ -85,6 +105,7 @@ class ArchiveMigrator:
             await self._reconstruct_rounds(session, entry, root.id)
 
             # 5. Add persona tags
+            session.add(DiscussionTagDB(discussion_id=disc.id, tag=source_tag))
             for persona_id in entry.personas:
                 session.add(
                     DiscussionTagDB(discussion_id=disc.id, tag=f"persona:{persona_id}")
@@ -92,6 +113,10 @@ class ArchiveMigrator:
 
             await session.commit()
             return disc.id
+
+    def _archive_source_tag(self, dir_name: str) -> str:
+        digest = hashlib.sha1(dir_name.encode("utf-8")).hexdigest()[:16]
+        return f"archive-src:{digest}"
 
     async def _reconstruct_rounds(
         self, session: AsyncSession, entry: ArchiveEntry, tree_node_id: str

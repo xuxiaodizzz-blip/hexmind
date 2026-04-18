@@ -40,7 +40,11 @@ class JSONArchive:
             id=entry.dir_name,
             question=entry.question,
             status=entry.status,
-            config={},
+            config={
+                "request_config_snapshot": entry.meta.get("request_config_snapshot", {}),
+                "runtime_config_snapshot": entry.meta.get("runtime_config_snapshot", {}),
+                "migration_metadata": entry.meta.get("migration_metadata", {}),
+            },
             verdict={"summary": entry.verdict} if entry.verdict else None,
             confidence=entry.confidence or None,
             created_at=entry.created_at,

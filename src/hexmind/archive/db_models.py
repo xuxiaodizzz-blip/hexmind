@@ -45,6 +45,12 @@ class UserDB(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Clerk integration: when auth provider is Clerk, users are JIT-created with
+    # clerk_user_id set and a placeholder password_hash ("clerk:<sub>"). Local
+    # email/password users have clerk_user_id=NULL.
+    clerk_user_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
@@ -114,7 +120,7 @@ class DiscussionDB(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     model_used: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    locale: Mapped[str] = mapped_column(String(5), default="zh")
+    discussion_locale: Mapped[str] = mapped_column("locale", String(5), default="zh")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

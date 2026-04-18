@@ -25,7 +25,7 @@ class DBArchive:
                 question=record.question,
                 config=record.config,
                 model_used=record.model_used,
-                locale=record.locale,
+                discussion_locale=record.discussion_locale,
             )
             # Persist all remaining fields from DiscussionRecord
             if record.status:
@@ -65,7 +65,7 @@ class DBArchive:
                 total_tokens=disc.total_tokens,
                 total_cost_usd=disc.total_cost_usd,
                 model_used=disc.model_used,
-                locale=disc.locale,
+                discussion_locale=disc.discussion_locale,
                 created_at=disc.created_at.isoformat() if disc.created_at else "",
                 completed_at=(
                     disc.completed_at.isoformat() if disc.completed_at else None

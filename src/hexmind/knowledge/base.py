@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 # ── Data models ────────────────────────────────────────────
@@ -31,7 +31,14 @@ class KnowledgeItem(BaseModel):
     authors: list[str] = []
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     citation_count: int | None = None
-    metadata: dict = {}
+    provider_metadata: dict = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("provider_metadata", "metadata"),
+    )
+
+    @property
+    def metadata(self) -> dict:
+        return self.provider_metadata
 
 
 class KnowledgeItemDetail(KnowledgeItem):

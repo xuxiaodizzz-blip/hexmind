@@ -4,6 +4,7 @@ import { Upload, FileText, Image, Trash2, X, File } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ACCEPTED_EXTENSIONS, ACCEPTED_MIME_TYPES, MAX_FILE_SIZE_MB } from '../data/personas';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useLanguage } from '../hooks/useLanguage';
 
 interface AssetFile {
   id: string;
@@ -26,6 +27,7 @@ function getFileIcon(type: string) {
 }
 
 export default function Assets() {
+  const { t } = useLanguage();
   const [files, setFiles] = useLocalStorage<AssetFile[]>('hexmind-assets', []);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -65,9 +67,9 @@ export default function Assets() {
     <div className="flex-1 overflow-y-auto no-scrollbar p-8 lg:p-12 z-10 w-full bg-[#0b0f17] text-white">
       <div className="max-w-4xl mx-auto">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-10">
-          <h1 className="text-4xl font-bold font-sans mb-2 tracking-tight">Assets</h1>
+          <h1 className="text-4xl font-bold font-sans mb-2 tracking-tight">{t('assets.title')}</h1>
           <p className="text-white/50 font-serif italic text-lg">
-            上传 AI 可读取的参考文件（PRD、PDF、图片等），讨论时将自动引用。
+            {t('assets.subtitle')}
           </p>
         </motion.div>
 
@@ -91,9 +93,9 @@ export default function Assets() {
           )}
         >
           <Upload className={cn('w-10 h-10 mx-auto mb-4', dragOver ? 'text-[#00e5ff]' : 'text-white/30')} />
-          <p className="text-white/70 font-sans font-medium mb-2">拖拽文件到此处，或点击选择</p>
+          <p className="text-white/70 font-sans font-medium mb-2">{t('assets.dragHint')}</p>
           <p className="text-white/40 text-sm">
-            支持 {ACCEPTED_EXTENSIONS.join(', ')} · 单文件最大 {MAX_FILE_SIZE_MB}MB
+            {t('assets.supportedFormats', { formats: ACCEPTED_EXTENSIONS.join(', '), size: String(MAX_FILE_SIZE_MB) })}
           </p>
           <input
             ref={inputRef}
@@ -109,17 +111,17 @@ export default function Assets() {
         {files.length === 0 ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-16 text-white/30">
             <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p className="font-serif italic text-lg">暂无文件</p>
+            <p className="font-serif italic text-lg">{t('assets.noFiles')}</p>
           </motion.div>
         ) : (
           <div className="space-y-3">
             <div className="flex justify-between items-center mb-4">
-              <p className="text-sm text-white/50">{files.length} 个文件</p>
+              <p className="text-sm text-white/50">{t('assets.fileCount', { count: String(files.length) })}</p>
               <button
                 onClick={() => setFiles([])}
                 className="text-xs text-white/40 hover:text-red-400 transition-colors flex items-center gap-1"
               >
-                <X className="w-3 h-3" /> 清空全部
+                <X className="w-3 h-3" /> {t('assets.clearAll')}
               </button>
             </div>
             {files.map((file, i) => {

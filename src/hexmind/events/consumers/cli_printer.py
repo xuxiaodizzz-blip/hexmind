@@ -6,9 +6,26 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from hexmind.events.types import Event, EventType
+from hexmind.events.types import (
+    BlueHatDecisionPayload,
+    BudgetWarningPayload,
+    ConclusionPayload,
+    ContextCompressedPayload,
+    DegradationChangedPayload,
+    DiscussionCancelledPayload,
+    DiscussionStartedPayload,
+    ErrorPayload,
+    Event,
+    EventType,
+    ForkCreatedPayload,
+    PanelistOutputPayload,
+    RoundCompletedPayload,
+    RoundStartedPayload,
+    SubConclusionPayload,
+    ValidationResultPayload,
+)
 
-# Hat → color mapping for Rich
+# Hat -> color mapping for Rich
 _HAT_STYLES: dict[str, str] = {
     "white": "bold white",
     "red": "bold red",
@@ -32,106 +49,131 @@ class CLIPrinter:
         elif self.verbose:
             self.console.print(f"[dim]Event: {event.type.value}[/dim]")
 
-    # ── Lifecycle ──────────────────────────────────────────────
+    # Lifecycle
 
     def _on_discussion_started(self, event: Event) -> None:
-        question = event.data.get("question", "")
-        personas = event.data.get("personas", [])
+        payload = event.payload_as(DiscussionStartedPayload)
+        if payload is None:
+            return
+
         self.console.print()
         self.console.print(
             Panel(
-                f"[bold]{question}[/bold]\n参与者: {', '.join(personas)}",
+                f"[bold]{payload.question}[/bold]\n参与者: {', '.join(payload.persona_ids)}",
                 title="[bold blue]HexMind Discussion[/bold blue]",
                 border_style="blue",
             )
         )
 
     def _on_conclusion(self, event: Event) -> None:
-        summary = event.data.get("summary", "")
-        confidence = event.data.get("confidence", "")
+        payload = event.payload_as(ConclusionPayload)
+        if payload is None:
+            return
+
         self.console.print()
         self.console.print(
             Panel(
-                f"[bold]{summary}[/bold]\n置信度: {confidence}",
+                f"[bold]{payload.summary}[/bold]\n置信度: {payload.confidence}",
                 title="[bold green]结论[/bold green]",
                 border_style="green",
             )
         )
 
     def _on_discussion_cancelled(self, event: Event) -> None:
-        reason = event.data.get("reason", "用户取消")
-        self.console.print(f"\n[bold red]讨论已取消: {reason}[/bold red]")
+        payload = event.payload_as(DiscussionCancelledPayload)
+        if payload is None:
+            return
 
-    # ── Round-level ────────────────────────────────────────────
+        self.console.print(f"\n[bold red]讨论已取消: {payload.reason}[/bold red]")
+
+    # Round-level
 
     def _on_blue_hat_decision(self, event: Event) -> None:
-        hat = event.data.get("hat") or "unknown"
-        reasoning = event.data.get("reasoning", "")
-        round_num = event.data.get("round", "?")
+        payload = event.payload_as(BlueHatDecisionPayload)
+        if payload is None:
+            return
+
+        hat = payload.hat.value if payload.hat else "unknown"
         style = _HAT_STYLES.get(hat, "bold")
         self.console.print()
-        self.console.rule(f"[{style}]Round {round_num} — {hat.title()} Hat[/{style}]")
-        if self.verbose and reasoning:
-            self.console.print(f"  [dim]Blue Hat: {reasoning}[/dim]")
+        self.console.rule(f"[{style}]Round {payload.round} - {hat.title()} Hat[/{style}]")
+        if self.verbose and payload.reasoning:
+            self.console.print(f"  [dim]Blue Hat: {payload.reasoning}[/dim]")
 
     def _on_round_started(self, event: Event) -> None:
-        if self.verbose:
-            self.console.print(f"  [dim]Round {event.data.get('round', '?')} 开始...[/dim]")
+        payload = event.payload_as(RoundStartedPayload)
+        if payload is None or not self.verbose:
+            return
+        self.console.print(f"  [dim]Round {payload.round} 开始...[/dim]")
 
     def _on_round_completed(self, event: Event) -> None:
-        if self.verbose:
-            self.console.print(f"  [dim]Round {event.data.get('round', '?')} 完成[/dim]")
+        payload = event.payload_as(RoundCompletedPayload)
+        if payload is None or not self.verbose:
+            return
+        self.console.print(f"  [dim]Round {payload.round} 完成[/dim]")
 
     def _on_panelist_output(self, event: Event) -> None:
-        persona = event.data.get("persona_id", "unknown")
-        hat = event.data.get("hat", "unknown")
-        content = event.data.get("content", "")
+        payload = event.payload_as(PanelistOutputPayload)
+        if payload is None:
+            return
+
+        hat = payload.hat.value if payload.hat else "unknown"
         style = _HAT_STYLES.get(hat, "bold")
-
-        header = Text(f"  {persona}", style=style)
+        header = Text(f"  {payload.persona_id or 'unknown'}", style=style)
         self.console.print(header)
-        self.console.print(f"    {content}")
+        self.console.print(f"    {payload.content}")
 
-    # ── Validation ─────────────────────────────────────────────
+    # Validation
 
     def _on_validation_result(self, event: Event) -> None:
-        if self.verbose:
-            passed = event.data.get("passed", True)
-            persona = event.data.get("persona_id", "")
-            if not passed:
-                violations = event.data.get("violations", [])
-                self.console.print(
-                    f"  [yellow]⚠ {persona} 验证失败: {violations}[/yellow]"
-                )
+        payload = event.payload_as(ValidationResultPayload)
+        if payload is None or not self.verbose or payload.passed:
+            return
 
-    # ── Tree ───────────────────────────────────────────────────
+        self.console.print(
+            f"  [yellow]⚠ {payload.persona_id} 验证失败: {payload.violations}[/yellow]"
+        )
+
+    # Tree
 
     def _on_fork_created(self, event: Event) -> None:
-        question = event.data.get("question", "")
-        self.console.print(f"\n  [bold cyan]↳ FORK: {question}[/bold cyan]")
+        payload = event.payload_as(ForkCreatedPayload)
+        if payload is None:
+            return
+        self.console.print(f"\n  [bold cyan]↳ FORK: {payload.question}[/bold cyan]")
 
     def _on_sub_conclusion(self, event: Event) -> None:
-        summary = event.data.get("summary", "")
-        self.console.print(f"  [cyan]子结论: {summary}[/cyan]")
+        payload = event.payload_as(SubConclusionPayload)
+        if payload is None:
+            return
+        self.console.print(f"  [cyan]子结论: {payload.summary}[/cyan]")
 
-    # ── Budget / compression ───────────────────────────────────
+    # Budget / compression
 
     def _on_budget_warning(self, event: Event) -> None:
-        pct = event.data.get("used_pct", 0)
-        level = event.data.get("level", "warning")
-        self.console.print(f"  [yellow]⚠ 预算已用 {pct:.0%} — {level}[/yellow]")
+        payload = event.payload_as(BudgetWarningPayload)
+        if payload is None:
+            return
+        self.console.print(
+            f"  [yellow]⚠ 预算已用 {payload.used_pct:.0%} - {payload.level}[/yellow]"
+        )
 
     def _on_degradation_changed(self, event: Event) -> None:
-        new_level = event.data.get("new_level", "")
-        self.console.print(f"  [yellow]降级: {new_level}[/yellow]")
+        payload = event.payload_as(DegradationChangedPayload)
+        if payload is None:
+            return
+        self.console.print(f"  [yellow]降级: {payload.new_level}[/yellow]")
 
     def _on_context_compressed(self, event: Event) -> None:
-        if self.verbose:
-            ratio = event.data.get("ratio", 0)
-            self.console.print(f"  [dim]上下文已压缩 (ratio={ratio:.2f})[/dim]")
+        payload = event.payload_as(ContextCompressedPayload)
+        if payload is None or not self.verbose:
+            return
+        self.console.print(f"  [dim]上下文已压缩 (ratio={payload.ratio:.2f})[/dim]")
 
-    # ── Error ──────────────────────────────────────────────────
+    # Error
 
     def _on_error(self, event: Event) -> None:
-        msg = event.data.get("message", "未知错误")
-        self.console.print(f"  [bold red]✖ 错误: {msg}[/bold red]")
+        payload = event.payload_as(ErrorPayload)
+        if payload is None:
+            return
+        self.console.print(f"  [bold red]✖ 错误: {payload.message or '未知错误'}[/bold red]")

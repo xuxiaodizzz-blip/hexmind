@@ -13,7 +13,8 @@ from hexmind.events.bus import EventBus
 logger = logging.getLogger(__name__)
 
 
-DiscussionStatus = Literal["running", "converged", "partial", "cancelled", "error"]
+DiscussionRunState = Literal["running", "completed"]
+DiscussionCompletionStatus = Literal["converged", "partial", "cancelled", "error"]
 
 
 @dataclass
@@ -28,7 +29,19 @@ class DiscussionEntry:
     user_id: str | None = None
     team_id: str | None = None
     task: asyncio.Task | None = None
-    status: DiscussionStatus = "running"
+    run_state: DiscussionRunState = "running"
+    completion_status: DiscussionCompletionStatus | None = None
+    termination_reason: str | None = None
+
+    @property
+    def status(self) -> str:
+        if self.run_state == "running":
+            return "running"
+        return self.completion_status or "completed"
+
+    @property
+    def is_running(self) -> bool:
+        return self.run_state == "running"
 
 
 class DiscussionRegistry:
@@ -69,11 +82,16 @@ class DiscussionRegistry:
         return self._entries.get(discussion_id)
 
     def mark_completed(
-        self, discussion_id: str, status: DiscussionStatus = "converged"
+        self,
+        discussion_id: str,
+        completion_status: DiscussionCompletionStatus = "converged",
+        termination_reason: str | None = None,
     ) -> None:
         entry = self._entries.get(discussion_id)
         if entry:
-            entry.status = status
+            entry.run_state = "completed"
+            entry.completion_status = completion_status
+            entry.termination_reason = termination_reason
 
     def list_all(self) -> list[DiscussionEntry]:
         return list(self._entries.values())
@@ -88,7 +106,7 @@ class DiscussionRegistry:
         completed = [
             e
             for e in self._entries.values()
-            if e.status != "running"
+            if not e.is_running
         ]
         completed.sort(key=lambda e: e.discussion_id)
         for entry in completed[: len(completed) - self._max_recent // 2]:

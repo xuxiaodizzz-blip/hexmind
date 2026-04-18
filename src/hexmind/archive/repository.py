@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from hexmind.discussion_contract import normalize_discussion_config_snapshot
 from hexmind.archive.db_models import (
     CitationDB,
     DiscussionDB,
@@ -22,6 +23,7 @@ from hexmind.archive.db_models import (
     TreeNodeDB,
     UserDB,
 )
+from hexmind.user_settings_contract import merge_user_settings, normalize_user_settings
 
 
 # ---------------------------------------------------------------------------
@@ -33,25 +35,60 @@ class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create(self, *, email: str, display_name: str, password_hash: str) -> UserDB:
-        user = UserDB(email=email, display_name=display_name, password_hash=password_hash)
+    async def create(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        password_hash: str,
+        settings: dict[str, Any] | None = None,
+    ) -> UserDB:
+        user = UserDB(
+            email=email,
+            display_name=display_name,
+            password_hash=password_hash,
+            settings=normalize_user_settings(settings),
+        )
         self.session.add(user)
         await self.session.flush()
         return user
 
     async def get_by_id(self, user_id: str) -> UserDB | None:
-        return await self.session.get(UserDB, user_id)
+        user = await self.session.get(UserDB, user_id)
+        return self._normalize_settings(user)
 
     async def get_by_email(self, email: str) -> UserDB | None:
         stmt = select(UserDB).where(UserDB.email == email)
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        return self._normalize_settings(user)
 
     async def update_last_login(self, user_id: str) -> None:
         user = await self.get_by_id(user_id)
         if user:
             user.last_login_at = datetime.now(timezone.utc)
             await self.session.flush()
+
+    async def update_settings(
+        self,
+        user_id: str,
+        settings_patch: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        user = await self.get_by_id(user_id)
+        if user is None:
+            return None
+
+        user.settings = merge_user_settings(user.settings, settings_patch)
+        await self.session.flush()
+        return dict(user.settings)
+
+    @staticmethod
+    def _normalize_settings(user: UserDB | None) -> UserDB | None:
+        if user is None:
+            return None
+
+        user.settings = normalize_user_settings(user.settings)
+        return user
 
 
 # ---------------------------------------------------------------------------
@@ -140,15 +177,15 @@ class DiscussionRepository:
         user_id: str | None = None,
         team_id: str | None = None,
         model_used: str | None = None,
-        locale: str = "zh",
+        discussion_locale: str = "zh",
     ) -> DiscussionDB:
         disc = DiscussionDB(
             question=question,
-            config=config,
+            config=normalize_discussion_config_snapshot(config),
             user_id=user_id,
             team_id=team_id,
             model_used=model_used,
-            locale=locale,
+            discussion_locale=discussion_locale,
         )
         self.session.add(disc)
         await self.session.flush()

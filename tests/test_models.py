@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from hexmind.knowledge.base import KnowledgeItem
 from hexmind.models import (
     HAT_CONSTRAINTS,
     ContextCheckResult,
@@ -241,8 +242,33 @@ class TestConfig:
         c = DiscussionConfig()
         assert c.max_rounds == 12
         assert c.token_budget == 50_000
-        assert c.locale == "zh"
+        assert c.discussion_locale == "zh"
         assert c.default_model == "gpt-4o"
+
+    def test_discussion_config_serializes_new_field_names(self):
+        c = DiscussionConfig(
+            max_rounds=8,
+            token_budget=64_000,
+            default_model="openai/gpt-5.4",
+            fallback_model="anthropic/claude-sonnet-4-6",
+            selected_model_alias="gpt",
+            fallback_model_alias="sonnet",
+        )
+
+        data = c.model_dump()
+        assert data["discussion_max_rounds"] == 8
+        assert data["execution_token_cap"] == 64_000
+        assert data["resolved_model_slug"] == "openai/gpt-5.4"
+        assert data["resolved_fallback_model_slug"] == "anthropic/claude-sonnet-4-6"
+        assert data["selected_model_id"] == "gpt"
+        assert data["fallback_model_id"] == "sonnet"
+        assert "max_rounds" not in data
+        assert "token_budget" not in data
+        assert "default_model" not in data
+
+    def test_discussion_config_accepts_legacy_locale_alias(self):
+        c = DiscussionConfig(locale="en")
+        assert c.discussion_locale == "en"
 
     def test_interaction_mode_default(self):
         m = InteractionMode()
@@ -280,3 +306,16 @@ class TestLLM:
             headroom=123000,
         )
         assert c.needs_compression is False
+
+
+class TestKnowledgeItem:
+    def test_provider_metadata_accepts_legacy_metadata_alias(self):
+        item = KnowledgeItem(
+            id="doc-1",
+            source="local_files",
+            title="Doc",
+            metadata={"path": "notes.md"},
+        )
+
+        assert item.provider_metadata == {"path": "notes.md"}
+        assert item.metadata == {"path": "notes.md"}

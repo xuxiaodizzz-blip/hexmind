@@ -19,7 +19,7 @@ class DiscussionRecord:
     total_tokens: int = 0
     total_cost_usd: float = 0.0
     model_used: str | None = None
-    locale: str = "zh"
+    discussion_locale: str = "zh"
     created_at: str = ""
     completed_at: str | None = None
     duration_seconds: float | None = None

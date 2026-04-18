@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from hexmind.api.schemas import (
@@ -40,12 +40,11 @@ def init_archive_routes(
 async def list_archives(
     request: Request,
     query: str | None = None,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     user=Depends(require_user_if_db_enabled),
 ):
     """List or search discussion archives."""
-    limit = min(limit, 100)  # Enforce upper bound
     reader = _get_archive_reader(request)
     if reader is None:
         raise RuntimeError("ArchiveReader not initialized")

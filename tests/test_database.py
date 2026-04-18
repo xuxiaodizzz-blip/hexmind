@@ -11,6 +11,7 @@ import pytest
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from hexmind.archive.migrator import ArchiveMigrator
 from hexmind.archive.db_models import (
     Base,
     CitationDB,
@@ -39,7 +40,15 @@ from hexmind.auth.service import (
     verify_password,
 )
 from hexmind.events.consumers.db_writer import DBWriter
-from hexmind.events.types import Event, EventType
+from hexmind.events.types import (
+    BlueHatDecisionPayload,
+    ConclusionPayload,
+    DiscussionStartedPayload,
+    Event,
+    EventType,
+    PanelistOutputPayload,
+)
+from hexmind.models.llm import TokenUsage
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +130,21 @@ class TestUserRepository:
         )
         assert user.id
         assert user.email == "test@example.com"
+        assert user.settings == {
+            "ui_preferences": {
+                "ui_locale": "zh",
+                "theme_mode": "system",
+            },
+            "discussion_preferences": {
+                "default_discussion_locale": "zh",
+                "default_selected_model_id": None,
+                "default_analysis_depth": None,
+                "default_execution_token_cap": None,
+                "default_discussion_max_rounds": None,
+                "default_time_budget_seconds": None,
+            },
+            "feature_flags": {},
+        }
 
     async def test_get_by_email(self, session: AsyncSession):
         repo = UserRepository(session)
@@ -137,6 +161,35 @@ class TestUserRepository:
         repo = UserRepository(session)
         found = await repo.get_by_email("nonexistent@example.com")
         assert found is None
+
+    async def test_create_normalizes_legacy_settings_shape(self, session: AsyncSession):
+        repo = UserRepository(session)
+        user = await repo.create(
+            email="legacy@example.com",
+            display_name="Legacy",
+            password_hash="hash",
+            settings={
+                "locale": "en",
+                "theme": "dark",
+                "token_budget": 75000,
+                "selected_model": "gpt",
+                "beta_discussion_timeline": True,
+            },
+        )
+
+        assert user.settings["ui_preferences"] == {
+            "ui_locale": "en",
+            "theme_mode": "dark",
+        }
+        assert user.settings["discussion_preferences"] == {
+            "default_discussion_locale": "zh",
+            "default_selected_model_id": "gpt",
+            "default_analysis_depth": None,
+            "default_execution_token_cap": 75000,
+            "default_discussion_max_rounds": None,
+            "default_time_budget_seconds": None,
+        }
+        assert user.settings["feature_flags"] == {"beta_discussion_timeline": True}
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +271,9 @@ class TestDiscussionRepository:
         fetched = await repo.get_by_id(disc.id)
         assert fetched is not None
         assert fetched.status == "running"
+        assert fetched.config["runtime_config_snapshot"]["max_rounds"] == 12
+        assert fetched.config["request_config_snapshot"] == {}
+        assert fetched.config["migration_metadata"] == {}
 
     async def test_update_status(self, session: AsyncSession):
         repo = DiscussionRepository(session)
@@ -393,49 +449,49 @@ class TestDBWriter:
         # discussion_started
         await writer.on_event(Event(
             type=EventType.DISCUSSION_STARTED,
-            data={
-                "question": "Should we use microservices?",
-                "config": {"max_rounds": 12},
-                "model": "gpt-4o",
-                "root_node_id": "node_abc",
-            },
+            payload=DiscussionStartedPayload(
+                question="Should we use microservices?",
+                root_node_id="node_abc",
+                runtime_config_snapshot={"max_rounds": 12},
+                resolved_model_slug="gpt-4o",
+            ),
         ))
         assert writer._discussion_id is not None
 
         # blue_hat_decision
         await writer.on_event(Event(
             type=EventType.BLUE_HAT_DECISION,
-            data={
-                "node_id": "node_abc",
-                "round": 1,
-                "hat": "white",
-                "reasoning": "Start with facts",
-            },
+            payload=BlueHatDecisionPayload(
+                node_id="node_abc",
+                round=1,
+                hat="white",
+                reasoning="Start with facts",
+            ),
         ))
 
         # panelist_output
         await writer.on_event(Event(
             type=EventType.PANELIST_OUTPUT,
-            data={
-                "node_id": "node_abc",
-                "round": 1,
-                "persona_id": "backend-engineer",
-                "hat": "white",
-                "content": "Microservices provide scalability",
-                "raw_content": "raw",
-                "items": [{"id": "W1", "content": "Scalability benefit"}],
-                "token_usage": {"prompt": 100, "completion": 50},
-            },
+            payload=PanelistOutputPayload(
+                node_id="node_abc",
+                round=1,
+                persona_id="backend-engineer",
+                hat="white",
+                content="Microservices provide scalability",
+                raw_content="raw",
+                items=[{"id": "W1", "content": "Scalability benefit"}],
+                token_usage=TokenUsage(total_tokens=150),
+            ),
         ))
 
         # conclusion
         await writer.on_event(Event(
             type=EventType.CONCLUSION,
-            data={
-                "summary": "Adopt microservices gradually",
-                "confidence": "high",
-                "token_usage": {"total_tokens": 5000, "total_cost_usd": 0.05},
-            },
+            payload=ConclusionPayload(
+                summary="Adopt microservices gradually",
+                confidence="high",
+                token_usage=TokenUsage(total_tokens=5000),
+            ),
         ))
 
         # Verify data was persisted
@@ -568,6 +624,56 @@ class TestDBArchive:
         assert await archive.get_discussion(disc_id) is None
 
 
+class TestArchiveMigrator:
+    async def test_migrator_uses_archive_source_identity_for_idempotency(
+        self, session_factory, tmp_path
+    ):
+        archive_dir = tmp_path / "archive"
+        archive_dir.mkdir()
+
+        for dir_name in ("2026-04-15_same-question-a", "2026-04-15_same-question-b"):
+            entry_dir = archive_dir / dir_name
+            entry_dir.mkdir()
+            (entry_dir / "meta.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "question": "Should we replatform the backend?",
+                        "status": "converged",
+                        "confidence": "high",
+                        "personas": ["backend-engineer", "cfo"],
+                        "verdict": "Proceed carefully",
+                        "created_at": "2026-04-15T00:00:00Z",
+                    },
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            (entry_dir / "discussion.md").write_text(
+                "# Discussion\n\n## Round 1 - White Hat\nW1: Fact\n",
+                encoding="utf-8",
+            )
+
+        migrator = ArchiveMigrator(session_factory)
+        migrated = await migrator.migrate_all(str(archive_dir))
+        migrated_again = await migrator.migrate_all(str(archive_dir))
+
+        assert migrated == 2
+        assert migrated_again == 0
+
+        async with session_factory() as session:
+            repo = DiscussionRepository(session)
+            discussions = await repo.search("Should we replatform the backend?")
+            assert len(discussions) == 2
+            assert sorted(
+                d.config["migration_metadata"]["archive_source_dir"]
+                for d in discussions
+            ) == [
+                "2026-04-15_same-question-a",
+                "2026-04-15_same-question-b",
+            ]
+
+
 # ---------------------------------------------------------------------------
 # API route tests (with httpx TestClient)
 # ---------------------------------------------------------------------------
@@ -619,7 +725,7 @@ class TestAuthAPI:
             "display_name": "Dup2",
             "password": "password456",
         })
-        assert resp.status_code == 409
+        assert resp.status_code == 400  # generic error to prevent email enumeration
 
     async def test_login(self, client):
         await client.post("/api/auth/register", json={
@@ -659,6 +765,78 @@ class TestAuthAPI:
         assert resp.status_code == 200
         assert resp.json()["email"] == "me@example.com"
 
+    async def test_me_settings_returns_namespaced_structure(self, client):
+        reg = await client.post("/api/auth/register", json={
+            "email": "settings@example.com",
+            "display_name": "Settings User",
+            "password": "password123",
+        })
+        token = reg.json()["access_token"]
+
+        resp = await client.get(
+            "/api/auth/me/settings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "ui_preferences": {
+                "ui_locale": "zh",
+                "theme_mode": "system",
+            },
+            "discussion_preferences": {
+                "default_discussion_locale": "zh",
+                "default_selected_model_id": None,
+                "default_analysis_depth": None,
+                "default_execution_token_cap": None,
+                "default_discussion_max_rounds": None,
+                "default_time_budget_seconds": None,
+            },
+            "feature_flags": {},
+        }
+
+    async def test_update_me_settings_merges_namespaces(self, client):
+        reg = await client.post("/api/auth/register", json={
+            "email": "settings-update@example.com",
+            "display_name": "Settings Update User",
+            "password": "password123",
+        })
+        token = reg.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = await client.put(
+            "/api/auth/me/settings",
+            headers=headers,
+            json={
+                "ui_preferences": {"ui_locale": "en"},
+                "discussion_preferences": {
+                    "default_selected_model_id": "opus",
+                    "default_analysis_depth": "deep",
+                    "default_execution_token_cap": 90000,
+                },
+                "feature_flags": {"beta_discussion_timeline": True},
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "ui_preferences": {
+                "ui_locale": "en",
+                "theme_mode": "system",
+            },
+            "discussion_preferences": {
+                "default_discussion_locale": "zh",
+                "default_selected_model_id": "opus",
+                "default_analysis_depth": "deep",
+                "default_execution_token_cap": 90000,
+                "default_discussion_max_rounds": None,
+                "default_time_budget_seconds": None,
+            },
+            "feature_flags": {
+                "beta_discussion_timeline": True,
+            },
+        }
+
     async def test_me_no_token(self, client):
         resp = await client.get("/api/auth/me")
         assert resp.status_code == 401
@@ -696,15 +874,24 @@ class TestTeamAPI:
 
 
 class TestProtectedDiscussionAPI:
-    async def test_create_discussion_requires_auth_when_db_enabled(self, client):
-        resp = await client.post(
-            "/api/discussions/",
-            json={
-                "question": "Should we launch feature X?",
-                "persona_ids": ["backend-engineer", "tech-lead"],
-            },
-        )
-        assert resp.status_code == 401
+    async def test_create_discussion_allows_anonymous_via_trial_gate(self, client):
+        """Anonymous create is allowed by the trial gate (was 401 before BYOK rollout).
+
+        The fixture does not wire DiscussionRegistry, so a successful gate check
+        propagates a RuntimeError from downstream wiring. We only assert here
+        that the route no longer rejects with 401 — the trial gate replaced the
+        hard auth requirement on this endpoint.
+        """
+        import pytest
+
+        with pytest.raises(RuntimeError, match="DiscussionRegistry not initialized"):
+            await client.post(
+                "/api/discussions/",
+                json={
+                    "question": "Should we launch feature X?",
+                    "persona_ids": ["backend-engineer", "tech-lead"],
+                },
+            )
 
     async def test_discussion_archive_persona_routes_require_auth(self, client):
         assert (await client.get("/api/discussions/nonexistent")).status_code == 401
@@ -738,13 +925,13 @@ class TestProtectedDiscussionAPI:
         orch = SimpleNamespace(
             tree=SimpleNamespace(root=root),
             budget=SimpleNamespace(total_tokens=0),
-            config=SimpleNamespace(token_budget=5000),
+            config=SimpleNamespace(execution_token_cap=5000),
             cancel=AsyncMock(),
             intervene=AsyncMock(),
             get_status_snapshot=lambda: {
                 "rounds_completed": 0,
                 "token_used": 0,
-                "token_budget": 5000,
+                "execution_token_cap": 5000,
             },
         )
         registry.register(
@@ -758,6 +945,10 @@ class TestProtectedDiscussionAPI:
 
         owner_resp = await client.get("/api/discussions/owned-discussion", headers=owner_headers)
         assert owner_resp.status_code == 200
+        owner_data = owner_resp.json()
+        assert owner_data["run_state"] == "running"
+        assert owner_data["completion_status"] is None
+        assert owner_data["execution_token_cap"] == 5000
 
         other_resp = await client.get("/api/discussions/owned-discussion", headers=other_headers)
         assert other_resp.status_code == 404
@@ -793,13 +984,13 @@ class TestProtectedDiscussionAPI:
         orch = SimpleNamespace(
             tree=SimpleNamespace(root=root),
             budget=SimpleNamespace(total_tokens=0),
-            config=SimpleNamespace(token_budget=5000),
+            config=SimpleNamespace(execution_token_cap=5000),
             cancel=AsyncMock(),
             intervene=AsyncMock(),
             get_status_snapshot=lambda: {
                 "rounds_completed": 0,
                 "token_used": 0,
-                "token_budget": 5000,
+                "execution_token_cap": 5000,
             },
         )
         registry.register(

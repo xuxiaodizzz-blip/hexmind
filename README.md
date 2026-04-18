@@ -7,7 +7,7 @@
     <a href="https://github.com/xuxiaodizzz-blip/hexmind/blob/main/LICENSE"><img src="https://img.shields.io/github/license/xuxiaodizzz-blip/hexmind" alt="MIT license" /></a>
     <a href="https://github.com/xuxiaodizzz-blip/hexmind/stargazers"><img src="https://img.shields.io/github/stars/xuxiaodizzz-blip/hexmind?style=social" alt="GitHub stars" /></a>
   </p>
-  <img src="docs/public/assets/hexmind-demo.gif" alt="HexMind demo showing persona orchestration, live discussion streaming, and analytics panels" width="920" />
+  <img src="docs/public/assets/screenshot-landing.png" alt="HexMind landing page — orchestrate your fleet of digital specialists" width="920" />
   <p><strong>Multi-expert debate, live streaming, and inspectable decision trails.</strong></p>
   <p>
     <a href="https://github.com/xuxiaodizzz-blip/hexmind/releases/latest">Latest Release</a>
@@ -65,6 +65,28 @@ HexMind is built for decisions that benefit from structured disagreement:
 - FastAPI backend with streaming discussion endpoints
 - React frontend for history, analytics, teams, and discussion views
 - Archive and export paths for replayable decisions
+
+## Frontend Showcase
+
+### Landing Page
+
+<img src="docs/public/assets/screenshot-landing.png" alt="HexMind landing page with hero section" width="920" />
+
+### Dashboard
+
+<img src="docs/public/assets/screenshot-dashboard.png" alt="Dashboard with discussion stats, activity chart, and recent discussions" width="920" />
+
+### Start a New Discussion
+
+<img src="docs/public/assets/screenshot-new-discussion.png" alt="Three-step wizard for creating a new multi-expert discussion" width="920" />
+
+### Persona Management
+
+<img src="docs/public/assets/screenshot-personas.png" alt="Persona card grid with domain filtering and custom persona creation" width="920" />
+
+### Feature Overview
+
+<img src="docs/public/assets/screenshot-features.png" alt="Detailed feature page showing AI Persona Synthesis and Six Thinking Hats Protocol" width="920" />
 
 ## Try In 60 Seconds
 
@@ -138,11 +160,11 @@ This release uses capabilities from several GitHub-hosted open-source projects, 
 
 See `ATTRIBUTIONS.md` for a concise breakdown of how those projects are used in this codebase.
 
-## Demo Asset
+## Demo Assets
 
-The animated preview at the top of this README is generated from `docs/public/assets/hexmind-demo.gif`.
+The frontend screenshots in this README are captured from the live React app using `scripts/capture_frontend_screenshots.py`.
 
-For social sharing, a static preview image is also generated at `docs/public/assets/hexmind-social-preview.png`.
+For social sharing, a static preview image is available at `docs/public/assets/hexmind-social-preview.png`.
 
 ## Architecture At A Glance
 

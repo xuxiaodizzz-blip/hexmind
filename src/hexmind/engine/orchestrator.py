@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from hexmind.discussion_contract import build_runtime_config_snapshot
 from hexmind.engine.budget import BudgetTracker, DegradationLevel
 from hexmind.engine.compressor import LLMLinguaCompressor
 from hexmind.engine.convergence import SemanticConvergenceChecker
@@ -17,7 +18,24 @@ from hexmind.engine.decision_tree import DecisionTree
 from hexmind.engine.token_accountant import TokenAccountant
 from hexmind.engine.validator import OutputValidator
 from hexmind.events.bus import EventBus
-from hexmind.events.types import Event, EventType
+from hexmind.events.types import (
+    ActorContextPayload,
+    BlueHatDecisionPayload,
+    ConclusionPayload,
+    ContextCompressedPayload,
+    DiscussionCancelledPayload,
+    DiscussionStartedPayload,
+    ErrorPayload,
+    Event,
+    EventType,
+    ForkCreatedPayload,
+    PanelistOutputPayload,
+    RoundCompletedPayload,
+    RoundStartedPayload,
+    SubConclusionPayload,
+    ValidationResultPayload,
+    VerdictPayload,
+)
 from hexmind.knowledge.base import KnowledgeItem
 from hexmind.knowledge.citation import CitationManager
 from hexmind.knowledge.hub import KnowledgeHub
@@ -25,6 +43,7 @@ from hexmind.knowledge.query_planner import KNOWLEDGE_HATS, QueryPlanner
 from hexmind.llm.base import LLMBackend
 from hexmind.models.config import DiscussionConfig
 from hexmind.models.hat import HatColor
+from hexmind.models.llm import TokenUsage
 from hexmind.models.persona import Persona
 from hexmind.models.round import OutputItem, PanelistOutput, Round
 from hexmind.models.tree import NodeStatus, TreeNode, Verdict
@@ -128,6 +147,21 @@ _VERDICT_SYSTEM = """基于以下讨论内容，生成结构化决策结论。
   "next_actions": ["行动1", ...]
 }}"""
 
+_LANGUAGE_DIRECTIVES = {
+    "zh": (
+        "输出语言要求：\n"
+        "- 所有推理、条目和最终结论使用简体中文。\n"
+        "- 保留 W1/B1/Y1/G1 等编号前缀不变。\n"
+        "- 如输入材料包含英文，可理解后用中文输出。"
+    ),
+    "en": (
+        "Output language requirements:\n"
+        "- Write all reasoning, list items, and final conclusions in English.\n"
+        "- Preserve prefixes such as W1/B1/Y1/G1 exactly as written.\n"
+        "- If source material is Chinese, understand it first and answer in English."
+    ),
+}
+
 
 class Orchestrator:
     """Blue Hat coordinator: drives multi-round, multi-hat discussions.
@@ -144,6 +178,7 @@ class Orchestrator:
         knowledge_hub: KnowledgeHub | None = None,
         user_id: str | None = None,
         team_id: str | None = None,
+        request_config_snapshot: dict[str, Any] | None = None,
     ) -> None:
         self.llm = llm
         self.personas = personas
@@ -163,7 +198,11 @@ class Orchestrator:
         self.query_planner = QueryPlanner(llm) if knowledge_hub else None
         self.user_id = user_id
         self.team_id = team_id
+        self.request_config_snapshot = dict(request_config_snapshot or {})
         self.last_run_status: NodeStatus | None = None
+        self.last_terminal_reason: str | None = None
+        self._billable_usage = TokenUsage()
+        self._run_started_at: float | None = None
 
         self._cancel_requested = False
         self._intervention_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -177,32 +216,49 @@ class Orchestrator:
         """Start a full discussion. All output via EventBus."""
         root = self.tree.create_root(question)
         self.last_run_status = None
+        self.last_terminal_reason = None
+        self._run_started_at = time.monotonic()
         try:
             await self.bus.emit(
                 Event(
                     type=EventType.DISCUSSION_STARTED,
-                    data={
-                        "question": question,
-                        "personas": [p.id for p in self.personas],
-                        "root_node_id": root.id,
-                        "config": self.config.model_dump(),
-                        "model": self.config.default_model,
-                        "locale": self.config.locale,
-                        "user_id": self.user_id,
-                        "team_id": self.team_id,
-                    },
+                    payload=DiscussionStartedPayload(
+                        question=question,
+                        persona_ids=[p.id for p in self.personas],
+                        root_node_id=root.id,
+                        request_config_snapshot=self.request_config_snapshot,
+                        runtime_config_snapshot=build_runtime_config_snapshot(self.config),
+                        selected_model_id=self.config.selected_model_id,
+                        resolved_model_slug=self.config.resolved_model_slug,
+                        discussion_locale=self.config.discussion_locale,
+                        actor_context=ActorContextPayload(
+                            user_id=self.user_id,
+                            team_id=self.team_id,
+                        ),
+                    ),
                 )
             )
 
-            await self._run_node(root)
+            await self._run_node(
+                root,
+                max_rounds=self.config.discussion_max_rounds,
+            )
 
             # Generate final verdict
             if root.status == NodeStatus.ACTIVE:
                 verdict = await self._generate_verdict(root)
                 root.verdict = verdict
                 root.status = NodeStatus.CONVERGED
+                self.last_terminal_reason = "natural_convergence"
                 await self.bus.emit(
-                    Event(type=EventType.CONCLUSION, data=verdict.model_dump())
+                    Event(
+                        type=EventType.CONCLUSION,
+                        payload=ConclusionPayload(
+                            **verdict.model_dump(),
+                            token_usage=self.get_billable_usage(),
+                            duration_seconds=self._elapsed_seconds(),
+                        ),
+                    )
                 )
         finally:
             self.last_run_status = root.status
@@ -222,31 +278,61 @@ class Orchestrator:
         return {
             "rounds_completed": len(root.rounds) if root else 0,
             "token_used": self.budget.total_tokens,
-            "token_budget": self.config.token_budget,
+            "execution_token_cap": self.config.execution_token_cap,
+            "exploration_token_cap": self.config.exploration_token_cap or 0,
+            "finalization_reserve_token_cap": self.config.finalization_reserve_token_cap or 0,
+            "billable_tokens": self._billable_usage.total_tokens,
+            "input_tokens": self._billable_usage.input_tokens,
+            "output_tokens": self._billable_usage.output_tokens,
         }
+
+    def get_billable_usage(self) -> TokenUsage:
+        """Return cumulative provider-reported usage for billing/reporting."""
+        return self._billable_usage.model_copy()
 
     def has_partial_verdict(self) -> bool:
         """Return whether the current root node ended with a partial verdict."""
         root = self.tree.root
         return bool(root and root.verdict and root.verdict.partial)
 
+    def _track_billable_usage(self, usage: TokenUsage) -> None:
+        total_tokens = usage.total_tokens or (usage.input_tokens + usage.output_tokens)
+        usage.total_tokens = total_tokens
+        self._billable_usage.input_tokens += usage.input_tokens
+        self._billable_usage.output_tokens += usage.output_tokens
+        self._billable_usage.total_tokens += total_tokens
+
     # ── Core loop ──────────────────────────────────────────────
 
-    async def _run_node(self, node: TreeNode) -> None:
+    async def _run_node(
+        self,
+        node: TreeNode,
+        *,
+        max_rounds: int | None = None,
+    ) -> None:
         """Drive discussion on a single tree node."""
+        effective_max_rounds = max_rounds or self.config.discussion_max_rounds
         while node.status == NodeStatus.ACTIVE:
             # Check cancel
             if self._cancel_requested:
                 await self._handle_cancel(node)
                 return
 
+            if self._time_budget_exhausted():
+                await self._force_conclude(node, "Time budget exceeded")
+                return
+
             # Check budget
-            if self.budget.is_exhausted:
-                await self._force_conclude(node, "Token budget exhausted (95%)")
+            if self.budget.is_execution_exhausted:
+                await self._force_conclude(node, "Execution budget exhausted")
+                return
+
+            if self.budget.should_force_conclude:
+                await self._force_conclude(node, "Exploration budget exhausted")
                 return
 
             # Check round limit
-            if len(node.rounds) >= self.config.max_rounds:
+            if len(node.rounds) >= effective_max_rounds:
                 await self._force_conclude(node, "Max rounds reached")
                 return
 
@@ -255,13 +341,15 @@ class Orchestrator:
             await self.bus.emit(
                 Event(
                     type=EventType.BLUE_HAT_DECISION,
-                    data={
-                        "node_id": node.id,
-                        "hat": decision.hat.value if decision.hat else None,
-                        "action": decision.action,
-                        "reasoning": decision.reasoning,
-                        "round": len(node.rounds) + 1,
-                    },
+                    payload=BlueHatDecisionPayload(
+                        node_id=node.id,
+                        hat=decision.hat,
+                        action=decision.action,
+                        reasoning=decision.reasoning,
+                        round=len(node.rounds) + 1,
+                        target_persona_ids=list(decision.target_personas),
+                        sub_question=decision.sub_question,
+                    ),
                 )
             )
 
@@ -288,7 +376,13 @@ class Orchestrator:
                 await self.bus.emit(
                     Event(
                         type=EventType.ROUND_STARTED,
-                        data={"round": len(node.rounds) + 1, "hat": decision.hat.value},
+                        payload=RoundStartedPayload(
+                            node_id=node.id,
+                            round=len(node.rounds) + 1,
+                            hat=decision.hat,
+                            target_persona_ids=[p.id for p in targets],
+                            blue_hat_reasoning=decision.reasoning,
+                        ),
                     )
                 )
 
@@ -302,11 +396,11 @@ class Orchestrator:
                     await self.bus.emit(
                         Event(
                             type=EventType.ERROR,
-                            data={
-                                "message": "All panelists failed in round",
-                                "round": round_.number,
-                                "node_id": node.id,
-                            },
+                            payload=ErrorPayload(
+                                message="All panelists failed in round",
+                                round=round_.number,
+                                node_id=node.id,
+                            ),
                         )
                     )
                     await self._force_conclude(
@@ -319,7 +413,12 @@ class Orchestrator:
                 await self.bus.emit(
                     Event(
                         type=EventType.ROUND_COMPLETED,
-                        data={"round": round_.number},
+                        payload=RoundCompletedPayload(
+                            node_id=node.id,
+                            round=round_.number,
+                            hat=round_.hat,
+                            outputs_count=len(round_.outputs),
+                        ),
                     )
                 )
 
@@ -352,6 +451,7 @@ class Orchestrator:
             round_count=len(node.rounds),
             degradation=self.budget.degradation_level.value,
         )
+        system_prompt += f"\n\n{self._language_directive()}"
         if intervention:
             system_prompt += f"\n\n[人工干预]: {intervention}"
 
@@ -363,6 +463,7 @@ class Orchestrator:
             temperature=0.3,
             response_format="json",
         )
+        self._track_billable_usage(response.usage)
         await self.budget.record_tokens(response.usage.total_tokens)
 
         try:
@@ -468,7 +569,7 @@ class Orchestrator:
         # Use fallback model if in MINIMAL degradation
         model_override = None
         if self.budget.degradation_level == DegradationLevel.MINIMAL:
-            model_override = self.config.fallback_model
+            model_override = self.config.resolved_fallback_model_slug
 
         if model_override and model_override != self.llm.model_name:
             # For now, we still use the same LLM but note the intent
@@ -480,6 +581,7 @@ class Orchestrator:
             user_prompt=context,
             temperature=temperature,
         )
+        self._track_billable_usage(response.usage)
 
         items = self._parse_output_items(response.content, hat)
 
@@ -501,11 +603,15 @@ class Orchestrator:
                 await self.bus.emit(
                     Event(
                         type=EventType.VALIDATION_RESULT,
-                        data={
-                            "passed": False,
-                            "persona_id": persona.id,
-                            "violations": [v.description for v in validation.violations],
-                        },
+                        payload=ValidationResultPayload(
+                            node_id=node.id,
+                            round=len(node.rounds) + 1,
+                            persona_id=persona.id,
+                            hat=hat,
+                            passed=False,
+                            violations=[v.description for v in validation.violations],
+                            retry_count=_retry_count,
+                        ),
                     )
                 )
                 # Retry with error feedback
@@ -521,19 +627,19 @@ class Orchestrator:
         await self.bus.emit(
             Event(
                 type=EventType.PANELIST_OUTPUT,
-                data={
-                    "node_id": node.id,
-                    "persona_id": persona.id,
-                    "hat": hat.value,
-                    "content": output.content,
-                    "raw_content": output.raw_content,
-                    "items": [item.model_dump() for item in output.items],
-                    "token_usage": output.token_usage.model_dump(),
-                    "round": len(node.rounds) + 1,
-                    "validation_passed": output.validation_passed,
-                    "validation_violations": output.validation_violations,
-                    "retry_count": output.retry_count,
-                },
+                payload=PanelistOutputPayload(
+                    node_id=node.id,
+                    persona_id=persona.id,
+                    hat=hat,
+                    content=output.content,
+                    raw_content=output.raw_content,
+                    items=list(output.items),
+                    token_usage=output.token_usage,
+                    round=len(node.rounds) + 1,
+                    validation_passed=output.validation_passed,
+                    validation_violations=list(output.validation_violations),
+                    retry_count=output.retry_count,
+                ),
             )
         )
         return output
@@ -546,7 +652,9 @@ class Orchestrator:
             await self.bus.emit(
                 Event(
                     type=EventType.ERROR,
-                    data={"message": "Cannot fork: depth or width limit reached"},
+                    payload=ErrorPayload(
+                        message="Cannot fork: depth or width limit reached",
+                    ),
                 )
             )
             return
@@ -555,24 +663,21 @@ class Orchestrator:
         await self.bus.emit(
             Event(
                 type=EventType.FORK_CREATED,
-                data={
-                    "parent_node_id": parent.id,
-                    "node_id": child.id,
-                    "question": sub_question,
-                    "depth": child.depth,
-                },
+                payload=ForkCreatedPayload(
+                    parent_node_id=parent.id,
+                    node_id=child.id,
+                    question=sub_question,
+                    depth=child.depth,
+                ),
             )
         )
 
-        # Run sub-discussion with reduced round limit
-        original_max = self.config.max_rounds
-        self.config.max_rounds = min(
-            self.config.max_fork_rounds, original_max
+        # Use a local child limit instead of mutating global config.
+        child_max_rounds = min(
+            self.config.max_fork_rounds,
+            self.config.discussion_max_rounds,
         )
-        try:
-            await self._run_node(child)
-        finally:
-            self.config.max_rounds = original_max
+        await self._run_node(child, max_rounds=child_max_rounds)
 
         # Generate sub-conclusion
         if child.status == NodeStatus.ACTIVE:
@@ -582,11 +687,11 @@ class Orchestrator:
             await self.bus.emit(
                 Event(
                     type=EventType.SUB_CONCLUSION,
-                    data={
-                        "node_id": child.id,
-                        "summary": sub_verdict.summary,
-                        "verdict": sub_verdict.model_dump(),
-                    },
+                    payload=SubConclusionPayload(
+                        node_id=child.id,
+                        summary=sub_verdict.summary,
+                        verdict=VerdictPayload(**sub_verdict.model_dump()),
+                    ),
                 )
             )
 
@@ -594,14 +699,20 @@ class Orchestrator:
 
     async def _generate_verdict(self, node: TreeNode, partial: bool = False) -> Verdict:
         """Ask LLM to synthesize a structured verdict from discussion."""
+        remaining_execution_tokens = self.budget.remaining_execution_tokens
+        if remaining_execution_tokens < 256:
+            return self._build_heuristic_verdict(node, partial=partial)
+
         context = self._build_context(node)
 
         response = await self.llm.complete(
-            system_prompt=_VERDICT_SYSTEM,
+            system_prompt=f"{_VERDICT_SYSTEM}\n\n{self._language_directive()}",
             user_prompt=context,
             temperature=0.2,
+            max_tokens=min(2000, remaining_execution_tokens),
             response_format="json",
         )
+        self._track_billable_usage(response.usage)
         await self.budget.record_tokens(response.usage.total_tokens)
 
         try:
@@ -610,6 +721,7 @@ class Orchestrator:
             data.bibliography = self._format_bibliography()
             return data
         except Exception:
+            return self._build_heuristic_verdict(node, partial=partial)
             return Verdict(
                 summary="无法生成结论",
                 confidence="low",
@@ -625,19 +737,65 @@ class Orchestrator:
 
     # ── Cancel / force conclude ────────────────────────────────
 
+    def _build_heuristic_verdict(self, node: TreeNode, partial: bool = False) -> Verdict:
+        """Build a structured fallback answer without another model call."""
+
+        facts: list[str] = []
+        risks: list[str] = []
+        values: list[str] = []
+        mitigations: list[str] = []
+        intuition: list[str] = []
+
+        for round_ in node.rounds:
+            for output in round_.outputs:
+                if output.hat == HatColor.WHITE:
+                    facts.extend(item.content for item in output.items[:2])
+                elif output.hat == HatColor.BLACK:
+                    risks.extend(item.content for item in output.items[:2])
+                elif output.hat == HatColor.YELLOW:
+                    values.extend(item.content for item in output.items[:2])
+                elif output.hat == HatColor.GREEN:
+                    mitigations.extend(item.content for item in output.items[:2])
+                elif output.hat == HatColor.RED and output.content:
+                    intuition.append(output.content.strip())
+
+        summary = (
+            facts[0]
+            if facts
+            else "Discussion reached budget guardrails before a model-written verdict was available."
+        )
+
+        return Verdict(
+            summary=summary,
+            confidence="medium" if facts else "low",
+            key_facts=facts[:5],
+            key_risks=risks[:5],
+            key_values=values[:5],
+            mitigations=mitigations[:5],
+            intuition_summary=" ".join(intuition[:2]),
+            blue_hat_ruling=(
+                "Exploration stopped to preserve answer delivery. This verdict summarizes the strongest signals collected so far."
+            ),
+            next_actions=mitigations[:3]
+            or ["Re-run with a deeper analysis preset if you need more exploration."],
+            partial=partial,
+            bibliography=self._format_bibliography(),
+        )
+
     async def _handle_cancel(self, node: TreeNode) -> None:
         verdict = await self._generate_verdict(node, partial=True)
         node.verdict = verdict
         node.status = NodeStatus.CANCELLED
+        self.last_terminal_reason = "user_cancelled"
         await self.bus.emit(
             Event(
                 type=EventType.DISCUSSION_CANCELLED,
-                data={
-                    "reason": "用户取消",
-                    "node_id": node.id,
+                payload=DiscussionCancelledPayload(
+                    reason="用户取消",
+                    node_id=node.id,
                     **verdict.model_dump(),
-                    "partial": True,
-                },
+                    token_usage=self.get_billable_usage(),
+                ),
             )
         )
 
@@ -645,10 +803,16 @@ class Orchestrator:
         verdict = await self._generate_verdict(node, partial=True)
         node.verdict = verdict
         node.status = NodeStatus.CONVERGED
+        self.last_terminal_reason = reason
         await self.bus.emit(
             Event(
                 type=EventType.CONCLUSION,
-                data={**verdict.model_dump(), "partial": True, "force_reason": reason},
+                payload=ConclusionPayload(
+                    **verdict.model_dump(),
+                    force_reason=reason,
+                    token_usage=self.get_billable_usage(),
+                    duration_seconds=self._elapsed_seconds(),
+                ),
             )
         )
 
@@ -709,7 +873,10 @@ class Orchestrator:
         await self.bus.emit(
             Event(
                 type=EventType.CONTEXT_COMPRESSED,
-                data={"node_id": node.id, "target_token": target},
+                payload=ContextCompressedPayload(
+                    node_id=node.id,
+                    target_token=target,
+                ),
             )
         )
 
@@ -759,6 +926,7 @@ class Orchestrator:
             hat_preference=pref_text,
             persona_prompt=persona.prompt,
         )
+        prompt += f"\n\n{self._language_directive()}"
 
         if knowledge_context:
             prompt += (
@@ -800,3 +968,20 @@ class Orchestrator:
             )
 
         return items
+
+    def _language_directive(self) -> str:
+        return _LANGUAGE_DIRECTIVES.get(
+            self.config.discussion_locale,
+            _LANGUAGE_DIRECTIVES["zh"],
+        )
+
+    def _elapsed_seconds(self) -> float | None:
+        if self._run_started_at is None:
+            return None
+        return max(0.0, time.monotonic() - self._run_started_at)
+
+    def _time_budget_exhausted(self) -> bool:
+        elapsed = self._elapsed_seconds()
+        if elapsed is None:
+            return False
+        return elapsed >= self.config.time_budget_seconds

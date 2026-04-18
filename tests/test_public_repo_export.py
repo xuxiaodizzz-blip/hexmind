@@ -25,12 +25,14 @@ def test_export_public_repo_creates_clean_snapshot(tmp_path):
     assert (output_dir / "personas" / "tech" / "backend-engineer.yaml").exists()
     assert (output_dir / "prompts" / "library" / "帽子协议" / "hat-white.yaml").exists()
     assert (output_dir / "docs" / "public" / "open-source-boundary.md").exists()
-    assert (output_dir / "docs" / "public" / "assets" / "hexmind-demo.gif").exists()
-    assert (output_dir / "docs" / "public" / "assets" / "hexmind-social-preview.png").exists()
     assert (output_dir / "scripts" / "render_readme_demo_gif.py").exists()
+    # New: local web entry points and pre-built SPA must ship in the public bundle.
+    assert (output_dir / "start-local.bat").exists()
+    assert (output_dir / "run_local_web.py").exists()
+    assert (output_dir / "requirements-runtime.txt").exists()
+    assert (output_dir / "web" / "dist" / "index.html").exists()
     assert not (output_dir / "personas" / "raw").exists()
     assert not (output_dir / "web" / "node_modules").exists()
-    assert not (output_dir / "web" / "dist").exists()
     assert not list(output_dir.rglob("__pycache__"))
 
 
@@ -101,6 +103,11 @@ def test_export_public_repo_supports_already_public_layout(tmp_path, monkeypatch
         public_root / "scripts" / "prepare_public_repo.py",
         public_root / "scripts" / "render_readme_demo_gif.py",
         public_root / "scripts" / "rebuild_prompt_library.py",
+        # New required files for the local web entry points and pre-built SPA.
+        public_root / "start-local.bat",
+        public_root / "run_local_web.py",
+        public_root / "requirements-runtime.txt",
+        public_root / "web" / "dist" / "index.html",
     ]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("placeholder\n", encoding="utf-8")

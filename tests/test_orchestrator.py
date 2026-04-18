@@ -13,7 +13,16 @@ from hexmind.engine.orchestrator import (
     _HAT_RULES,
 )
 from hexmind.events.bus import EventBus
-from hexmind.events.types import Event, EventType
+from hexmind.events.types import (
+    BlueHatDecisionPayload,
+    ConclusionPayload,
+    DiscussionCancelledPayload,
+    Event,
+    EventType,
+    PanelistOutputPayload,
+    RoundCompletedPayload,
+    RoundStartedPayload,
+)
 from hexmind.models.config import DiscussionConfig
 from hexmind.models.hat import HatColor
 from hexmind.models.llm import LLMResponse, TokenPricing, TokenUsage
@@ -131,6 +140,18 @@ def test_blue_hat_decision_fork():
 
 
 # ── Orchestrator construction ──────────────────────────────
+
+
+def test_event_payload_as_coerces_legacy_dict_payload():
+    event = Event(
+        type=EventType.BLUE_HAT_DECISION,
+        data={"node_id": "root", "round": 1, "hat": "white", "reasoning": "facts first"},
+    )
+
+    payload = event.payload_as(BlueHatDecisionPayload)
+    assert payload is not None
+    assert payload.hat == HatColor.WHITE
+    assert payload.round == 1
 
 
 def test_orchestrator_init():
@@ -329,9 +350,16 @@ async def test_run_one_round_then_converge():
 
     assert len(orch.tree.root.rounds) == 1
     assert orch.tree.root.rounds[0].hat == HatColor.WHITE
-    assert collector.has(EventType.ROUND_STARTED)
-    assert collector.has(EventType.PANELIST_OUTPUT)
-    assert collector.has(EventType.ROUND_COMPLETED)
+    round_started = collector.of_type(EventType.ROUND_STARTED)[0]
+    panelist_output = collector.of_type(EventType.PANELIST_OUTPUT)[0]
+    round_completed = collector.of_type(EventType.ROUND_COMPLETED)[0]
+    blue_hat = collector.of_type(EventType.BLUE_HAT_DECISION)[0]
+
+    assert isinstance(round_started.payload, RoundStartedPayload)
+    assert isinstance(panelist_output.payload, PanelistOutputPayload)
+    assert isinstance(round_completed.payload, RoundCompletedPayload)
+    assert isinstance(blue_hat.payload, BlueHatDecisionPayload)
+    assert round_started.data["hat"] == "white"
 
 
 @pytest.mark.asyncio
@@ -395,7 +423,9 @@ async def test_cancel_generates_partial_verdict():
 
     assert orch.tree.root.status == NodeStatus.CANCELLED
     assert orch.last_run_status == NodeStatus.CANCELLED
-    assert collector.has(EventType.DISCUSSION_CANCELLED)
+    cancelled_event = collector.of_type(EventType.DISCUSSION_CANCELLED)[0]
+    assert isinstance(cancelled_event.payload, DiscussionCancelledPayload)
+    assert cancelled_event.data["partial"] is True
 
 
 @pytest.mark.asyncio
@@ -438,7 +468,12 @@ def test_get_status_snapshot_exposes_public_metrics():
     assert snapshot == {
         "rounds_completed": 1,
         "token_used": 123,
-        "token_budget": 321,
+        "execution_token_cap": 321,
+        "exploration_token_cap": 257,
+        "finalization_reserve_token_cap": 64,
+        "billable_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
     }
 
 
@@ -459,6 +494,49 @@ def test_has_partial_verdict_uses_public_query():
     )
 
     assert orch.has_partial_verdict() is True
+
+
+@pytest.mark.asyncio
+async def test_run_tracks_provider_reported_billable_usage():
+    discuss_json = json.dumps(
+        {"action": "discuss", "hat": "white", "target_personas": ["tester"], "reasoning": "need data"}
+    )
+    panelist_response = "W1: test fact one"
+    converge_json = json.dumps({"action": "converge", "reasoning": "enough"})
+    verdict_json = json.dumps(
+        {
+            "summary": "conclusion",
+            "confidence": "medium",
+            "key_facts": [],
+            "key_risks": [],
+            "key_values": [],
+            "mitigations": [],
+            "intuition_summary": "",
+            "blue_hat_ruling": "OK",
+            "next_actions": [],
+        }
+    )
+    llm = MockLLM([discuss_json, panelist_response, converge_json, verdict_json])
+    bus = EventBus()
+    collector = EventCollector()
+    bus.subscribe(collector)
+
+    orch = Orchestrator(llm, [_persona()], _config(), bus)
+    await orch.run("question")
+
+    usage = orch.get_billable_usage()
+    assert usage.input_tokens == 200
+    assert usage.output_tokens == 200
+    assert usage.total_tokens == 400
+
+    snapshot = orch.get_status_snapshot()
+    assert snapshot["billable_tokens"] == 400
+    assert snapshot["input_tokens"] == 200
+    assert snapshot["output_tokens"] == 200
+
+    conclusion_event = collector.of_type(EventType.CONCLUSION)[0]
+    assert isinstance(conclusion_event.payload, ConclusionPayload)
+    assert conclusion_event.data["token_usage"]["total_tokens"] == 400
 
 
 @pytest.mark.asyncio
@@ -491,6 +569,40 @@ async def test_budget_exhaustion_forces_conclude():
 
     conclusion_events = collector.of_type(EventType.CONCLUSION)
     assert len(conclusion_events) >= 1
+
+
+@pytest.mark.asyncio
+async def test_time_budget_forces_conclude(monkeypatch):
+    verdict_json = json.dumps(
+        {
+            "summary": "Time budget reached",
+            "confidence": "low",
+            "key_facts": [],
+            "key_risks": [],
+            "key_values": [],
+            "mitigations": [],
+            "intuition_summary": "",
+            "blue_hat_ruling": "Stop due to time limit",
+            "next_actions": [],
+        }
+    )
+    llm = MockLLM([verdict_json])
+    bus = EventBus()
+    collector = EventCollector()
+    bus.subscribe(collector)
+
+    timestamps = iter([100.0, 101.5, 101.5])
+    monkeypatch.setattr(
+        "hexmind.engine.orchestrator.time.monotonic",
+        lambda: next(timestamps, 101.5),
+    )
+
+    orch = Orchestrator(llm, [_persona()], _config(time_budget_seconds=1), bus)
+    await orch.run("question")
+
+    conclusion_event = collector.of_type(EventType.CONCLUSION)[0]
+    assert conclusion_event.data["force_reason"] == "Time budget exceeded"
+    assert conclusion_event.data["duration_seconds"] == pytest.approx(1.5)
 
 
 # ── Fork tests ─────────────────────────────────────────────
@@ -608,11 +720,12 @@ async def test_execute_round_keeps_blue_hat_reasoning():
 
 
 @pytest.mark.asyncio
-async def test_fork_restores_max_rounds_on_exception():
+async def test_fork_does_not_mutate_global_round_limit_on_exception():
     orch = Orchestrator(MockLLM(), [_persona()], _config(max_rounds=4, max_fork_rounds=2), EventBus())
     parent = orch.tree.create_root("question")
 
-    async def _boom(node):
+    async def _boom(node, *, max_rounds=None):
+        assert max_rounds == 2
         raise RuntimeError("child failed")
 
     orch._run_node = _boom  # type: ignore[method-assign]

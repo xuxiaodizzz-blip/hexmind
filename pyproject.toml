@@ -26,7 +26,7 @@ dependencies = [
     "asyncpg>=0.29",
     "aiosqlite>=0.20",
     "alembic>=1.13",
-    "pyjwt>=2.8",
+    "pyjwt[crypto]>=2.8",
     "bcrypt>=4.0",
     "email-validator>=2.0",
 ]

@@ -14,6 +14,8 @@ from hexmind.api.schemas import (
     TeamMemberInfo,
     TeamSummary,
     UserProfile,
+    UserSettingsResponse,
+    UserSettingsUpdateRequest,
 )
 from hexmind.archive.database import get_session
 from hexmind.archive.db_models import UserDB
@@ -37,8 +39,8 @@ async def register(
     existing = await repo.get_by_email(body.email)
     if existing:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Registration failed",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Registration failed. Please check your information and try again.",
         )
     pw_hash = hash_password(body.password)
     user = await repo.create(
@@ -80,6 +82,28 @@ async def me(user: UserDB = Depends(get_current_user)) -> UserProfile:
         display_name=user.display_name,
         created_at=user.created_at.isoformat() if user.created_at else "",
     )
+
+
+@router.get("/auth/me/settings", response_model=UserSettingsResponse)
+async def get_my_settings(
+    user: UserDB = Depends(get_current_user),
+) -> UserSettingsResponse:
+    return UserSettingsResponse.model_validate(user.settings or {})
+
+
+@router.put("/auth/me/settings", response_model=UserSettingsResponse)
+async def update_my_settings(
+    body: UserSettingsUpdateRequest,
+    user: UserDB = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserSettingsResponse:
+    repo = UserRepository(session)
+    settings = await repo.update_settings(
+        user.id,
+        body.model_dump(exclude_none=True),
+    )
+    await session.commit()
+    return UserSettingsResponse.model_validate(settings or {})
 
 
 # ---------------------------------------------------------------------------

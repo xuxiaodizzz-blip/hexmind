@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,16 +18,51 @@ from hexmind.auth.service import decode_access_token
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def _auth_provider() -> str:
+    """Return the active auth provider: 'local' (default) or 'clerk'.
+
+    Kept as a function (not module constant) so tests can flip the env var
+    between cases without reloading the module.
+    """
+    return (os.getenv("HEXMIND_AUTH_PROVIDER") or "local").strip().lower()
+
+
+async def _resolve_clerk_user(token: str, session: AsyncSession) -> UserDB:
+    """Verify a Clerk JWT and return (JIT-provisioning if needed) the user."""
+    # Imported lazily so local-mode deployments don't need the Clerk deps path
+    # hot at import time.
+    from hexmind.auth.clerk_provisioner import get_or_provision_user
+    from hexmind.auth.clerk_verifier import ClerkAuthError, verify_clerk_jwt
+
+    try:
+        claims = verify_clerk_jwt(token)
+    except ClerkAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
+    return await get_or_provision_user(session, claims)
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> UserDB:
-    """FastAPI dependency: extract and verify the current user from Bearer token."""
+    """FastAPI dependency: extract and verify the current user from Bearer token.
+
+    Supports two providers (switched by HEXMIND_AUTH_PROVIDER):
+        - 'local' (default): HS256 JWT signed by our JWT_SECRET.
+        - 'clerk': RS256 JWT issued by Clerk; JIT-provisions users.
+    """
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authorization header",
         )
+
+    if _auth_provider() == "clerk":
+        return await _resolve_clerk_user(credentials.credentials, session)
+
     try:
         payload = decode_access_token(credentials.credentials)
     except pyjwt.PyJWTError:

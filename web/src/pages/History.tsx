@@ -5,8 +5,10 @@ import { Search, Filter, Calendar } from 'lucide-react';
 import { cn } from '../lib/utils';
 import * as api from '../lib/api';
 import { SYSTEM_PERSONAS } from '../data/personas';
+import { useLanguage } from '../hooks/useLanguage';
 
 export default function HistoryPage() {
+  const { t, locale } = useLanguage();
   const [items, setItems] = useState<api.ArchiveSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState('');
@@ -39,7 +41,11 @@ export default function HistoryPage() {
     fetchData();
   };
 
-  const personaName = (pid: string) => SYSTEM_PERSONAS.find((p) => p.id === pid)?.name ?? pid;
+  const personaName = (pid: string) => {
+    const p = SYSTEM_PERSONAS.find((x) => x.id === pid);
+    if (!p) return pid;
+    return locale === 'en' ? (p.nameEn ?? p.name) : p.name;
+  };
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const currentPage = Math.floor(offset / limit) + 1;
@@ -48,8 +54,8 @@ export default function HistoryPage() {
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-10">
-          <h1 className="text-4xl font-bold font-sans mb-2 tracking-tight">Discussion History</h1>
-          <p className="text-white/50 font-serif italic text-lg">Browse, search, and revisit past analyses.</p>
+          <h1 className="text-4xl font-bold font-sans mb-2 tracking-tight">{t('history.title')}</h1>
+          <p className="text-white/50 font-serif italic text-lg">{t('history.subtitle')}</p>
         </motion.div>
 
         {/* Search & Filter Bar */}
@@ -60,23 +66,23 @@ export default function HistoryPage() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索讨论..."
+              placeholder={t('history.searchPlaceholder')}
               className="w-full bg-[#151a23] border border-transparent focus:border-white/20 rounded-xl py-3 pl-11 pr-4 text-sm text-white placeholder:text-white/30 focus:outline-none transition-colors"
             />
           </form>
           <div className="flex gap-3">
             <button className="flex items-center gap-2 px-4 py-3 bg-[#151a23] border border-white/5 rounded-xl text-sm text-white/70 hover:text-white hover:border-white/20 transition-colors">
-              <Filter className="w-4 h-4" /> Filters
+              <Filter className="w-4 h-4" /> {t('history.filters')}
             </button>
             <button className="flex items-center gap-2 px-4 py-3 bg-[#151a23] border border-white/5 rounded-xl text-sm text-white/70 hover:text-white hover:border-white/20 transition-colors">
-              <Calendar className="w-4 h-4" /> Date Range
+              <Calendar className="w-4 h-4" /> {t('history.dateRange')}
             </button>
           </div>
         </motion.div>
 
         {/* Status Tabs */}
         <div className="flex items-center gap-6 border-b border-white/10 mb-8">
-          {['All', 'Running 🟢', 'Completed ✅', 'Cancelled ❌'].map((tab, i) => (
+          {[t('history.all'), t('history.running'), t('history.completed'), t('history.cancelled')].map((tab, i) => (
             <button
               key={tab}
               className={cn(
@@ -93,10 +99,10 @@ export default function HistoryPage() {
         {/* Discussion Cards */}
         <div className="space-y-4">
           {loading && items.length === 0 && (
-            <div className="text-center py-16 text-white/30 font-serif italic">加载中...</div>
+            <div className="text-center py-16 text-white/30 font-serif italic">{t('history.loading')}</div>
           )}
           {!loading && items.length === 0 && (
-            <div className="text-center py-16 text-white/30 font-serif italic">暂无讨论记录</div>
+            <div className="text-center py-16 text-white/30 font-serif italic">{t('history.empty')}</div>
           )}
           {items.map((d, i) => (
             <motion.div
@@ -106,7 +112,7 @@ export default function HistoryPage() {
               transition={{ delay: 0.15 + i * 0.05 }}
             >
               <Link
-                to={`/app/discussion/${d.id}`}
+                to={`/discussion/${d.id}`}
                 className="block bg-[#151a23] border border-white/5 rounded-2xl p-6 hover:border-white/10 transition-colors"
               >
                 <div className="flex items-start justify-between mb-4">
@@ -153,15 +159,15 @@ export default function HistoryPage() {
                 disabled={offset === 0}
                 className="px-4 py-2 bg-[#151a23] border border-white/5 rounded-lg text-sm text-white/50 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                ← Prev
+                {t('history.prev')}
               </button>
-              <span className="text-sm text-white/50 px-4">Page {currentPage} of {totalPages}</span>
+              <span className="text-sm text-white/50 px-4">{t('history.page', { current: String(currentPage), total: String(totalPages) })}</span>
               <button
                 onClick={() => setOffset(offset + limit)}
                 disabled={offset + limit >= total}
                 className="px-4 py-2 bg-[#151a23] border border-white/5 rounded-lg text-sm text-white/50 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                Next →
+                {t('history.next')}
               </button>
             </div>
           </div>

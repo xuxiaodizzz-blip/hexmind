@@ -6,6 +6,10 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field
 
+from hexmind.models.llm import TokenUsage
+from hexmind.user_settings_contract import UserSettings as UserSettingsResponse
+from hexmind.user_settings_contract import UserSettingsUpdate as UserSettingsUpdateRequest
+
 
 # ── Discussion ─────────────────────────────────────────────
 
@@ -13,9 +17,33 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field
 class DiscussionConfigOverride(BaseModel):
     """Optional overrides for discussion configuration."""
 
-    model: str = "gpt-4o"
-    token_budget: int = Field(default=50_000, ge=5_000, le=500_000)
-    locale: Literal["zh", "en"] = "zh"
+    model_config = ConfigDict(populate_by_name=True)
+
+    selected_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("selected_model", "model"),
+    )
+    analysis_depth: Literal["quick", "standard", "deep"] | None = None
+    execution_token_cap: int = Field(
+        default=50_000,
+        ge=5_000,
+        le=500_000,
+        validation_alias=AliasChoices("execution_token_cap", "token_budget"),
+    )
+    discussion_max_rounds: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        validation_alias=AliasChoices("discussion_max_rounds", "max_rounds"),
+    )
+    time_budget_seconds: int | None = Field(
+        default=None,
+        ge=60,
+    )
+    discussion_locale: Literal["zh", "en"] = Field(
+        default="zh",
+        validation_alias=AliasChoices("discussion_locale", "locale"),
+    )
 
 
 class CreateDiscussionRequest(BaseModel):
@@ -38,11 +66,16 @@ class DiscussionStatusResponse(BaseModel):
 
     discussion_id: str
     question: str
+    run_state: Literal["running", "completed"]
+    completion_status: Literal["converged", "partial", "cancelled", "error"] | None = None
+    termination_reason: str | None = None
     status: str
     personas: list[str]
     rounds_completed: int
     token_used: int
-    token_budget: int
+    execution_token_cap: int
+    exploration_token_cap: int
+    finalization_reserve_token_cap: int
 
 
 # ── Intervention ───────────────────────────────────────────
@@ -143,13 +176,73 @@ class PromptDetail(PromptSummary):
 # ── Settings ───────────────────────────────────────────────
 
 
+class ModelCapabilitiesSummary(BaseModel):
+    """Frontend-safe model capability flags."""
+
+    vision: bool = False
+    tools: bool = False
+    reasoning: bool = False
+    max_output_mode: Literal["standard", "high_quality"] = "standard"
+
+
+class ModelOptionSummary(BaseModel):
+    """Frontend-safe model option."""
+
+    id: str
+    label: str
+    capabilities: ModelCapabilitiesSummary
+
+
+class AnalysisDepthOptionSummary(BaseModel):
+    """Frontend-safe summary for one analysis depth preset."""
+
+    id: Literal["quick", "standard", "deep"]
+    max_personas: int
+    execution_token_cap: int
+    exploration_token_cap: int
+    finalization_reserve_token_cap: int
+    discussion_max_rounds: int
+    time_budget_seconds: int
+    supports_fork: bool
+
+
 class AppSettings(BaseModel):
     """GET/POST /api/settings."""
 
-    default_model: str = "gpt-4o"
-    fallback_model: str = "gpt-4o-mini"
-    token_budget: int = 50_000
-    locale: Literal["zh", "en"] = "zh"
+    default_model_id: str = "gpt"
+    models: list[ModelOptionSummary] = Field(default_factory=list)
+    default_analysis_depth: Literal["quick", "standard", "deep"] = "standard"
+    analysis_depths: list[AnalysisDepthOptionSummary] = Field(default_factory=list)
+    plan_max_personas: int = 5
+    default_execution_token_cap: int = 50_000
+    default_discussion_max_rounds: int = 12
+    default_time_budget_seconds: int = 300
+    default_discussion_locale: Literal["zh", "en"] = "zh"
+
+
+class ChatMessage(BaseModel):
+    """Single OpenAI-style chat message."""
+
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1)
+
+
+class ChatRequest(BaseModel):
+    """POST /api/chat body."""
+
+    selected_model: str | None = None
+    messages: list[ChatMessage] = Field(min_length=1)
+    stream: bool = False
+
+
+class ChatCompletionResponse(BaseModel):
+    """POST /api/chat response."""
+
+    selected_model: str
+    resolved_model: str
+    content: str
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    finish_reason: str = "stop"
 
 
 # ── Auth (Phase 5) ────────────────────────────────────────
@@ -241,4 +334,49 @@ class PersonaStatItem(BaseModel):
     persona_id: str
     hat: str
     count: int
+
+
+# ── Billing / Pricing ─────────────────────────────────────
+
+
+class PlanModelInfo(BaseModel):
+    """Model available within a pricing plan."""
+
+    id: str
+    label: str
+
+
+class PlanFeature(BaseModel):
+    """Single feature line item in a pricing plan."""
+
+    text: str
+    text_zh: str
+
+
+class PricingPlanResponse(BaseModel):
+    """GET /api/billing/plans item."""
+
+    id: str
+    name: str
+    name_zh: str
+    price_monthly: float
+    price_yearly: float
+    badge: str | None = None
+    badge_zh: str | None = None
+    description: str
+    description_zh: str
+    models: list[PlanModelInfo] = Field(default_factory=list)
+    features: list[PlanFeature] = Field(default_factory=list)
+    highlighted: bool = False
+
+
+class BillingInfoResponse(BaseModel):
+    """GET /api/billing/info — current user billing status."""
+
+    current_plan: str = "free"
+    discussions_used: int = 0
+    discussions_limit: int | None = 5
+    credits_remaining: int = 50
+    credits_monthly: int = 50
+    plan_execution_token_cap: int = 50_000
 

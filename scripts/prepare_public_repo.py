@@ -39,10 +39,16 @@ FILE_MAPPINGS: dict[str, str] = {
     "scripts/prepare_public_repo.py": "scripts/prepare_public_repo.py",
     "scripts/render_readme_demo_gif.py": "scripts/render_readme_demo_gif.py",
     "scripts/rebuild_prompt_library.py": "scripts/rebuild_prompt_library.py",
+    # Local single-port web entry points so non-developers can double-click and run.
+    "start-local.bat": "start-local.bat",
+    "run_local_web.py": "run_local_web.py",
+    "requirements-runtime.txt": "requirements-runtime.txt",
 }
 
 WEB_DIR_MAPPINGS: dict[str, str] = {
     "web/src": "web/src",
+    # Pre-built SPA so first-time users don't need npm install.
+    "web/dist": "web/dist",
 }
 
 EXPORT_IGNORE = shutil.ignore_patterns(
@@ -53,7 +59,6 @@ EXPORT_IGNORE = shutil.ignore_patterns(
     ".mypy_cache",
     ".ruff_cache",
     "node_modules",
-    "dist",
     ".vite",
 )
 

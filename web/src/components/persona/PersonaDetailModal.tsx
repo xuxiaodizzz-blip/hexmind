@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Modal, Button, Select } from '../ui';
 import type { Persona } from '../../types/persona';
+import { useLanguage } from '../../hooks/useLanguage';
 
 const domainOptions = [
   { label: 'Tech', value: 'tech' },
@@ -30,6 +31,8 @@ export default function PersonaDetailModal({
   onClose,
 }: Props) {
   const [form, setForm] = useState<Persona>({ ...persona });
+  const { locale, t } = useLanguage();
+  const displayName = locale === 'en' ? (persona.nameEn ?? persona.name) : persona.name;
 
   const update = <K extends keyof Persona>(key: K, value: Persona[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -37,9 +40,6 @@ export default function PersonaDetailModal({
 
   const handleSave = () => {
     if (!form.name.trim() || !form.prompt.trim()) return;
-    if (!form.avatar) {
-      form.avatar = `https://picsum.photos/seed/${form.id}/150/150`;
-    }
     onSave({ ...form, isCustom: true });
   };
 
@@ -47,20 +47,20 @@ export default function PersonaDetailModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={readOnly ? persona.name : isNew ? 'Create Persona' : 'Edit Persona'}
+      title={readOnly ? displayName : isNew ? t('personaModal.create' as any) : t('personaModal.editPersona' as any)}
       size="md"
     >
       <div className="p-6 space-y-5">
         {/* Name */}
         <div>
           <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">
-            Name
+            {t('personaModal.name' as any)}
           </label>
           <input
             type="text"
             value={form.name}
             onChange={(e) => update('name', e.target.value)}
-            placeholder="e.g. The Pragmatic Auditor"
+            placeholder={t('personaModal.namePlaceholder' as any)}
             disabled={readOnly}
             className="w-full bg-[#1e2430] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#00e5ff]/50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           />
@@ -70,7 +70,7 @@ export default function PersonaDetailModal({
         {!readOnly ? (
           <div>
             <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">
-              Domain
+              {t('personaModal.domain' as any)}
             </label>
             <Select
               options={domainOptions}
@@ -81,7 +81,7 @@ export default function PersonaDetailModal({
         ) : (
           <div>
             <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">
-              Domain
+              {t('personaModal.domain' as any)}
             </label>
             <p className="text-sm text-white/80 capitalize">{form.domain}</p>
           </div>
@@ -90,13 +90,13 @@ export default function PersonaDetailModal({
         {/* Description */}
         <div>
           <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">
-            Description
+            {t('personaModal.description' as any)}
           </label>
           <input
             type="text"
             value={form.description}
             onChange={(e) => update('description', e.target.value)}
-            placeholder="One-line description of this persona's expertise"
+            placeholder={t('personaModal.descPlaceholder' as any)}
             disabled={readOnly}
             className="w-full bg-[#1e2430] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#00e5ff]/50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           />
@@ -105,12 +105,12 @@ export default function PersonaDetailModal({
         {/* System Prompt */}
         <div>
           <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">
-            System Prompt <span className="text-[#00e5ff]">*</span>
+            {t('personaModal.systemPrompt' as any)} <span className="text-[#00e5ff]">*</span>
           </label>
           <textarea
             value={form.prompt}
             onChange={(e) => update('prompt', e.target.value)}
-            placeholder="Define this persona's behavior, expertise, and communication style..."
+            placeholder={t('personaModal.promptPlaceholder' as any)}
             rows={8}
             disabled={readOnly}
             className="w-full bg-[#1e2430] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#00e5ff]/50 transition-colors resize-none font-mono leading-relaxed disabled:opacity-60 disabled:cursor-not-allowed"
@@ -120,7 +120,7 @@ export default function PersonaDetailModal({
         {/* Tags */}
         <div>
           <label className="block text-[10px] font-bold tracking-[0.15em] text-white/50 uppercase mb-2">
-            Tags (comma separated)
+            {t('personaModal.tags' as any)}
           </label>
           <input
             type="text"
@@ -134,7 +134,7 @@ export default function PersonaDetailModal({
                   .filter(Boolean),
               )
             }
-            placeholder="e.g. Finance, Risk, Compliance"
+            placeholder={t('personaModal.tagsPlaceholder' as any)}
             disabled={readOnly}
             className="w-full bg-[#1e2430] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#00e5ff]/50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           />
@@ -144,9 +144,9 @@ export default function PersonaDetailModal({
         {!readOnly && (
           <div className="flex items-center justify-between p-4 bg-[#1e2430] rounded-xl border border-white/5">
             <div>
-              <p className="font-sans font-medium text-sm text-white">Make Public</p>
+              <p className="font-sans font-medium text-sm text-white">{t('personaModal.makePublic' as any)}</p>
               <p className="text-xs text-white/40">
-                Allow other users to discover and use this persona
+                {t('personaModal.makePublicDesc' as any)}
               </p>
             </div>
             <button
@@ -172,14 +172,14 @@ export default function PersonaDetailModal({
                 onClose();
               }}
             >
-              Delete
+              {t('personaModal.delete' as any)}
             </Button>
           ) : (
             <div />
           )}
           <div className="flex gap-3">
             <Button variant="secondary" size="md" onClick={onClose}>
-              {readOnly ? 'Close' : 'Cancel'}
+              {readOnly ? t('personaModal.close' as any) : t('personaModal.cancel' as any)}
             </Button>
             {!readOnly && (
               <Button
@@ -187,7 +187,7 @@ export default function PersonaDetailModal({
                 onClick={handleSave}
                 disabled={!form.name.trim() || !form.prompt.trim()}
               >
-                {isNew ? 'Create' : 'Save'}
+                {isNew ? t('personaModal.create' as any) : t('personaModal.save' as any)}
               </Button>
             )}
           </div>
